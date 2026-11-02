@@ -1,1 +1,46 @@
-
+name: 動画を自動生成
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-latest
+        ports:
+          - 50021:50021
+    steps:
+      - uses: actions/checkout@v4
+      - name: 準備
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          pip install requests
+      - name: VOICEVOX起動待ち
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:50021/version && exit 0
+            sleep 3
+          done
+          echo "::error::VOICEVOXが起動しません"; exit 1
+      - name: 動画生成
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python generate.py
+      - name: 履歴を保存
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/history.json
+          git commit -m "履歴更新" || true
+          git push || true
+      - name: 完成品をReleaseに公開
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="video-$(date +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" output/video.mp4 output/thumbnail.jpg \
+            --title "$(cat output/title.txt)" --notes-file output/metadata.md
