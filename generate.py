@@ -7,7 +7,7 @@ import requests
 
 W, H = 1080, 1920
 OUT, WORK, DATA = pathlib.Path("output"), pathlib.Path("work"), pathlib.Path("data")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 VV = "http://localhost:50021"
 VOICE_NAME = os.environ.get("VOICE_NAME", "ずんだもん")
 SPEED = float(os.environ.get("VOICE_SPEED", "1.1"))
