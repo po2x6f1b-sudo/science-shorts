@@ -98,13 +98,14 @@ def write_script(topic, src, feedback=""):
 - 難しい専門用語には短い説明を添える。引き延ばしや繰り返しは禁止。
 - 6〜8シーンに分割。1シーンのnarrationは20〜60文字。
 - emphasis: 画面に大きく出すキーワード(8文字以内)。
-- pexels_query: Pexelsで映像を探す英語の検索語(2〜3語、具体的で縦動画向き)。
+- pexels_query: Pexelsで映像を探す英語の検索語(2〜3語、具体的)。
+- nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
 - titles: クリックしたくなるタイトル3案(各30文字以内)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
 {('前回の指摘(必ず修正): ' + feedback) if feedback else ''}
 JSONのみで返す:
-{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":""}}],
+{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":""}}],
 "description":"","hashtags":["#"],"pinned_comment":"","facts":[""]}}"""
     return gemini(p)
 
@@ -164,9 +165,57 @@ def pexels(query, used):
     return None
 
 
+
+NASA_CENTERS = {"HQ", "JPL", "GSFC", "JSC", "MSFC", "ARC", "KSC", "LaRC", "GRC", "AFRC", "SSC"}
+BAD = re.compile(r"copyright|©|\besa\b|european space agency|jaxa|roscosmos|cnsa|isro|spacex|boeing|blue origin|"
+                 r"northrop|lockheed|virgin|rocket lab|\blogo\b|insignia|emblem|\bpatch\b|\bseal\b|astronaut|"
+                 r"cosmonaut|\bcrew\b|portrait|interview|briefing|press conference|administrator|commander|"
+                 r"ceremony|\bspeaks?\b|speech|\bteam\b|employee|\bpeople\b|children|student", re.I)
+
+
+def ok_item(d):
+    """NASA自身の素材で、他社/他機関の表記・ロゴ・人物が主役のものを除外する(完全ではない)"""
+    if d.get("center") not in NASA_CENTERS:
+        return False
+    blob = " ".join(str(d.get(k, "")) for k in ("title", "description", "secondary_creator", "photographer", "keywords"))
+    return not BAD.search(blob)
+
+
+def nasa_media(query, used):
+    """NASA Image and Video Library (APIキー不要)。NASA自身が撮影・制作した素材のみ使う。"""
+    api = "https://images-api.nasa.gov"
+    for mtype in ("video", "image"):
+        try:
+            r = requests.get(api + "/search", headers=UA, timeout=30,
+                             params={"q": query, "media_type": mtype, "page_size": 30})
+            items = r.json().get("collection", {}).get("items", [])
+        except Exception as e:
+            print("NASA検索失敗:", e); continue
+        random.shuffle(items)
+        for it in items:
+            d = (it.get("data") or [{}])[0]
+            nid = d.get("nasa_id")
+            if not nid or nid in used or not ok_item(d):
+                continue
+            try:
+                m = requests.get(f"{api}/asset/{requests.utils.quote(nid)}", headers=UA, timeout=30).json()
+                hrefs = [x["href"] for x in m["collection"]["items"]]
+            except Exception:
+                continue
+            pref = (["~medium.mp4", "~small.mp4", "~mobile.mp4"] if mtype == "video"
+                    else ["~large.jpg", "~medium.jpg"])
+            for suf in pref:
+                url = next((h for h in hrefs if suf in h), None)
+                if url:
+                    used.add(nid)
+                    return nid, requests.utils.requote_uri(url), mtype, d.get("title", "")
+    return None
+
 def download(url, path):
     with requests.get(url, stream=True, timeout=120) as r:
         r.raise_for_status()
+        if int(r.headers.get("Content-Length", 0)) > 80e6:
+            raise ValueError("ファイルが大きすぎるためスキップ")
         with open(path, "wb") as f:
             for c in r.iter_content(1 << 20):
                 f.write(c)
@@ -190,6 +239,14 @@ def chunks(text, limit=26):
     return out
 
 
+
+def probe(path):
+    o = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height:format=duration", "-of", "json", str(path)])
+    j = json.loads(o)
+    st = j["streams"][0]
+    return int(st["width"]), int(st["height"]), float(j.get("format", {}).get("duration") or 0)
+
 def render_scene(i, sc, bg, wav, dur, F):
     total = dur + 0.15
     ef = WORK / f"s{i}_e.txt"
@@ -203,9 +260,24 @@ def render_scene(i, sc, bg, wav, dur, F):
         f.write_text(wrap(c, 14), encoding="utf-8")
         subs.append((f, t, t + span))
         t += span
-    vf = ("[0:v]scale=1242:2208:force_original_aspect_ratio=increase,"
-          "crop=1080:1920:x='(iw-1080)/2+sin(t*0.8)*40':y='(ih-1920)/2+cos(t*0.6)*40',"
-          "fps=30,setsar=1,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,"
+    is_img = bool(bg) and str(bg).lower().endswith((".jpg", ".jpeg", ".png"))
+    ss = []
+    land = False
+    if bg:
+        w0, h0, d0 = probe(bg)
+        land = w0 > h0
+        if not is_img and d0 > total + 8:
+            ss = ["-ss", f"{random.uniform(3, d0 - total - 1):.2f}"]
+    if land:
+        fgw = "scale=w='trunc(1080*(1+0.012*t)/2)*2':h=-2:eval=frame" if is_img else "scale=1080:-2"
+        base = ("[0:v]split=2[a][b];[a]scale=1242:2208:force_original_aspect_ratio=increase,"
+                "crop=1080:1920,boxblur=30:5,eq=brightness=-0.18[bg];"
+                f"[b]{fgw}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30,setsar=1,")
+    else:
+        base = ("[0:v]scale=1242:2208:force_original_aspect_ratio=increase,"
+                "crop=1080:1920:x='(iw-1080)/2+sin(t*0.8)*40':y='(ih-1920)/2+cos(t*0.6)*40',"
+                "fps=30,setsar=1,")
+    vf = (base + "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,"
           f"drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
           "bordercolor=black:x=(w-text_w)/2:y=260:line_spacing=16:alpha='min(1,t/0.25)'")
     for f, a, b in subs:
@@ -213,8 +285,14 @@ def render_scene(i, sc, bg, wav, dur, F):
                f"boxcolor=black@0.6:boxborderw=22:x=(w-text_w)/2:y=1360:line_spacing=14:"
                f"enable='between(t,{a:.2f},{b:.2f})'")
     vf += ",format=yuv420p[v]"
-    inp = (["-stream_loop", "-1", "-i", str(bg)] if bg else
-           ["-f", "lavfi", "-i", "gradients=s=1080x1920:c0=0x0b1030:c1=0x4b2a8a:x0=0:y0=0:x1=1080:y1=1920:speed=0.02"])
+    if not bg:
+        inp = ["-f", "lavfi", "-i", "gradients=s=1080x1920:c0=0x02030a:c1=0x0a3550:x0=0:y0=0:x1=1080:y1=1920:speed=0.02"]
+    elif is_img:
+        inp = ["-loop", "1", "-framerate", "30", "-i", str(bg)]
+    elif ss:
+        inp = [*ss, "-i", str(bg)]
+    else:
+        inp = ["-stream_loop", "-1", "-i", str(bg)]
     out = WORK / f"scene{i}.mp4"
     run(["ffmpeg", "-y", *inp, "-i", str(wav), "-filter_complex", vf, "-map", "[v]", "-map", "1:a",
          "-af", "apad", "-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
@@ -285,7 +363,7 @@ def main():
 
     print("4) ナレーション生成")
     speaker, vname = pick_speaker()
-    items, used, credits = [], set(), []
+    items, used, used_nasa, credits = [], set(), set(), []
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
@@ -296,7 +374,21 @@ def main():
             try:
                 download(p[1], bg); credits.append(f"Pexels: {p[2]} (video {p[0]})")
             except Exception as e:
-                print("   映像DL失敗→背景で代替:", e); bg = None
+                print("   Pexels DL失敗:", e); bg = None
+        if not bg:
+            for q in dict.fromkeys([sc.get("nasa_query"), sc.get("pexels_query")]):
+                if not q:
+                    continue
+                n = nasa_media(q, used_nasa)
+                if n:
+                    ext = ".mp4" if n[2] == "video" else ".jpg"
+                    bg = WORK / f"bg{i}{ext}"
+                    try:
+                        download(n[1], bg); credits.append(f"NASA: {n[3]} https://images.nasa.gov/details/{n[0]}")
+                        break
+                    except Exception as e:
+                        print("   NASA DL失敗:", e); bg = None
+        print(f"   シーン{i}: {'素材あり' if bg else '背景のみ'} ({sc.get('nasa_query')})")
         items.append((sc, bg, wav, dur))
     voice_total = sum(d for *_, d in items)
     print(f"   ナレーション合計 {voice_total:.1f} 秒")
@@ -313,11 +405,11 @@ def main():
     md = [f"# {script['titles'][0]}", "", "## タイトル案"] + [f"- {x}" for x in script["titles"]]
     md += ["", "## 概要欄（コピーして使用）", script["description"], "",
            "出典: " + src["title"] + " (Wikipedia) " + src["url"],
-           "音声: " + credit_voice, "映像: Pexels (無料素材) / BGM・効果音: 自動生成のオリジナル音",
+           "音声: " + credit_voice, "映像・画像: NASA Image and Video Library（NASAが本動画を承認・推薦するものではありません） / BGM・効果音: 自動生成のオリジナル音",
            "※ナレーションはAI音声を使用しています。", "", " ".join(script["hashtags"]), "",
            "## 固定コメント案", script["pinned_comment"], "",
            "## 事実確認メモ（投稿前に目視確認してください）"] + [f"- {x}" for x in script.get("facts", [])]
-    md += ["", f"## 映像クレジット"] + [f"- {c}" for c in credits]
+    md += ["", "## 映像クレジット（投稿前に、NASAロゴ・人物・他社の表記が映っていないか目視確認）"] + [f"- {c}" for c in credits]
     md += ["", f"長さ(ナレーション): {voice_total:.1f}秒 / 合成後: {t0:.1f}秒"]
     (OUT / "metadata.md").write_text("\n".join(md), encoding="utf-8")
     (OUT / "title.txt").write_text(script["titles"][0], encoding="utf-8")
