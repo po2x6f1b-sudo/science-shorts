@@ -39,28 +39,39 @@ def gemini(prompt):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise Fail("GEMINI_API_KEY が設定されていません")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+    models = [m.strip() for m in os.environ.get("GEMINI_MODELS", MODEL + ",gemini-3.1-flash-lite").split(",") if m.strip()]
     body = {"contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0.8}}
-    for i in range(4):
-        r = requests.post(url, headers={"x-goog-api-key": key}, json=body, timeout=120)
-        if r.status_code in (429, 500, 503):
-            time.sleep(15 * (i + 1))
-            continue
-        if r.status_code != 200:
-            raise Fail(f"Gemini APIエラー {r.status_code}: {r.text[:400]}")
-        try:
-            txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(re.sub(r"^```json|```$", "", txt.strip()))
-        except Exception as e:
-            raise Fail(f"Geminiの応答を解析できません: {e}\n{r.text[:400]}")
-    raise Fail("Geminiの無料枠の上限に達した可能性があります。時間をおいて再実行してください")
+    last = ""
+    for rnd in range(3):
+        for m in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
+            try:
+                r = requests.post(url, headers={"x-goog-api-key": key}, json=body, timeout=120)
+            except requests.RequestException as e:
+                last = f"{m}: 通信エラー {e}"
+                continue
+            if r.status_code in (404, 429, 500, 503):
+                last = f"{m}: {r.status_code}"
+                print(f"   Gemini {m} が使えません({r.status_code})→次のモデルを試します")
+                continue
+            if r.status_code != 200:
+                raise Fail(f"Gemini APIエラー {m} {r.status_code}: {r.text[:400]}")
+            try:
+                txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(re.sub(r"^```json|```$", "", txt.strip()))
+            except Exception as e:
+                last = f"{m}: 応答を解析できません {e}"
+                continue
+        time.sleep(20 * (rnd + 1))
+    raise Fail("Geminiの無料枠の上限に達した可能性があります。時間をおいて再実行してください（最後のエラー: " + last + "）")
 
 
 # ---------- 1. テーマ ----------
 def pick_topic(history):
     used = [h["topic"] for h in history][-200:]
-    p = f"""あなたは「宇宙・科学・人体の意外な雑学」YouTubeショート動画の企画者です。
+    p = f"""あなたは「宇宙の意外な雑学」YouTubeショート動画の企画者です。
+テーマは、宇宙・天体・太陽系・地球と宇宙の関わり・探査機・望遠鏡など、NASAの画像や映像で表現できる題材に限ります。人体や身近な科学など、宇宙と関係ない題材は選ばないでください。
 視聴者が最後まで見たくなる、意外性のある新しいテーマを1つ決めてください。
 すでに使ったテーマ（重複・類似は禁止）: {json.dumps(used, ensure_ascii=False)}
 Wikipedia(日本語)で記事が見つかる一般的な名詞を wiki_query にしてください。
