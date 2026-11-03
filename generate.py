@@ -170,7 +170,11 @@ NASA_CENTERS = {"HQ", "JPL", "GSFC", "JSC", "MSFC", "ARC", "KSC", "LaRC", "GRC",
 BAD = re.compile(r"copyright|©|\besa\b|european space agency|jaxa|roscosmos|cnsa|isro|spacex|boeing|blue origin|"
                  r"northrop|lockheed|virgin|rocket lab|\blogo\b|insignia|emblem|\bpatch\b|\bseal\b|astronaut|"
                  r"cosmonaut|\bcrew\b|portrait|interview|briefing|press conference|administrator|commander|"
-                 r"ceremony|\bspeaks?\b|speech|\bteam\b|employee|\bpeople\b|children|student", re.I)
+                 r"ceremony|\bspeaks?\b|speech|\bteam\b|employee|\bpeople\b|children|student|talks?\b|discuss|explain|"
+                 r"\bsays?\b|\bhost\b|presenter|narrat|conversation|panel|lecture|webinar|reporter|anchor|"
+                 r"\bnews\b|episode|\bshow\b|poster|lithograph|\bprint\b|\bscan\b|caption|slide|chart|"
+                 r"universit|univ\.|\bman\b|\bwoman\b|\bscientist|engineer|\bdr\.", re.I)
+VIDEO_OK = re.compile(r"animation|visuali[sz]ation|simulation|time-?lapse|fly-?by|b-?roll", re.I)
 
 
 def ok_item(d):
@@ -196,6 +200,8 @@ def nasa_media(query, used):
             d = (it.get("data") or [{}])[0]
             nid = d.get("nasa_id")
             if not nid or nid in used or not ok_item(d):
+                continue
+            if mtype == "video" and not VIDEO_OK.search(" ".join(str(d.get(k, "")) for k in ("title", "description", "keywords"))):
                 continue
             try:
                 m = requests.get(f"{api}/asset/{requests.utils.quote(nid)}", headers=UA, timeout=30).json()
