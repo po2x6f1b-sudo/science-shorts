@@ -71,12 +71,34 @@ def gemini(prompt):
 def pick_topic(history):
     used = [h["topic"] for h in history][-200:]
     p = f"""あなたは「宇宙の意外な雑学」YouTubeショート動画の企画者です。
-テーマは、宇宙・天体・太陽系・地球と宇宙の関わり・探査機・望遠鏡など、NASAの画像や映像で表現できる題材に限ります。人体や身近な科学など、宇宙と関係ない題材は選ばないでください。
-視聴者が最後まで見たくなる、意外性のある新しいテーマを1つ決めてください。
+テーマは、宇宙・天体・太陽系・地球と宇宙の関わり・探査機・望遠鏡など、NASAの画像や映像で表現できる題材に限ります。
+
+【最重要】日本の一般の大人の多くが「知らなかった！」と驚く題材だけを選ぶこと。
+禁止: 教科書や雑学本の定番（宇宙は広い、月は少しずつ遠ざかる、太陽は恒星、地球は丸い、など）。
+求めるもの:
+- 常識の逆を行く事実、桁外れの数字、身近なものに例えると驚く比較（バナナの放射線のような話）
+- 「え、そうなの？」と思わず誰かに話したくなる一点
+- Wikipedia(日本語)の個別の記事に、その事実が書かれていそうなこと
+
+候補を8個出し、それぞれ次を付ける:
+- topic: 動画テーマ(日本語、驚きが伝わる言い方)
+- angle: 動画で伝える一番意外な事実を1文で
+- wiki_query: Wikipedia日本語の個別記事名(例:「かに星雲」「ボイジャー1号」。「宇宙」のような広い語は不可)
+- surprise: 一般の日本人にとっての意外さ(1〜10、厳しく採点)
+- known: すでに知っている人の多さ(1〜10、厳しく採点)
 すでに使ったテーマ（重複・類似は禁止）: {json.dumps(used, ensure_ascii=False)}
-Wikipedia(日本語)で記事が見つかる一般的な名詞を wiki_query にしてください。
-JSONのみで返す: {{"topic":"動画テーマ(日本語)","wiki_query":"Wikipedia検索語"}}"""
-    return gemini(p)
+JSONのみ: {{"candidates":[{{"topic":"","angle":"","wiki_query":"","surprise":0,"known":0}}]}}"""
+    cands = gemini(p).get("candidates", [])
+    if not cands:
+        raise Fail("テーマ候補が得られませんでした")
+    def score(c):
+        try:
+            return float(c.get("surprise", 0)) - float(c.get("known", 10))
+        except Exception:
+            return -99
+    cands.sort(key=score, reverse=True)
+    print("   候補:", [(c.get("topic"), c.get("surprise"), c.get("known")) for c in cands[:3]])
+    return cands[0]
 
 
 # ---------- 2. 調査 ----------
@@ -91,21 +113,27 @@ def wiki(query):
     e = requests.get(api, headers=UA, timeout=30, params={
         "action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "format": "json"}).json()
     page = next(iter(e["query"]["pages"].values()))
-    text = (page.get("extract") or "")[:5000]
+    text = (page.get("extract") or "")[:8000]
     if len(text) < 200:
         raise Fail(f"資料が短すぎます: {title}")
     return {"title": title, "url": "https://ja.wikipedia.org/wiki/" + requests.utils.quote(title), "text": text}
 
 
 # ---------- 3-4. 台本と事実確認 ----------
-def write_script(topic, src, feedback=""):
+def write_script(topic, angle, src, feedback=""):
     p = f"""あなたはYouTubeショートの構成作家です。テーマ「{topic}」の台本を作ります。
+軸にしたい意外な事実(案): {angle}
+※資料で裏付けられない場合は、資料の中から最も意外で具体的な事実に軸を変えてよい。
 【資料（これに書かれた事実だけを使うこと。資料にない数字や主張は禁止）】
 {src['text']}
 
 条件:
 - ナレーション合計 260〜330文字（約45〜55秒）。自然な話し言葉の日本語。
 - 構成: 冒頭2秒で驚かせる問いかけ → 意外な事実 → 理由の解説 → 余韻のある結び
+- 【質の条件】日本の一般の大人がすでに知っている基本説明で尺を使わない。「みんなが思っていること」→「実は違う／もっと桁外れ」の落差を作る。
+- 冒頭は、具体的な数字か、常識を覆す一言で始める（「〇〇って知ってた？」の定型だけにしない）。
+- 資料にある具体的な数字を2〜3個使い、身近なものに例えて実感させる。例えは資料の数値からの単純な換算に限り、断定しすぎない。
+- 一般論や感想（「神秘的ですね」など）で字数を埋めない。1シーン1情報。
 - 難しい専門用語には短い説明を添える。引き延ばしや繰り返しは禁止。
 - 6〜8シーンに分割。1シーンのnarrationは20〜60文字。
 - emphasis: 画面に大きく出すキーワード(8文字以内)。
@@ -122,11 +150,13 @@ JSONのみで返す:
 
 
 def fact_check(script, src):
-    p = f"""次の動画台本を、資料と照合して事実確認してください。厳しく判定すること。
+    p = f"""次の動画台本を、資料と照合して事実確認し、さらに「へぇ度」を採点してください。厳しく判定すること。
 【資料】{src['text']}
 【台本】{json.dumps([s['narration'] for s in script['scenes']], ensure_ascii=False)}
-資料で裏付けられない数字・断定・誇張があれば problems に具体的に列挙。なければ ok=true。
-JSONのみ: {{"ok":true,"problems":[""]}}"""
+1) 資料で裏付けられない数字・断定・誇張があれば problems に具体的に列挙。なければ ok=true。
+2) surprise: 日本の一般の大人がすでに知っている内容は低く評価し、「へぇ〜！知らなかった」と思う度合いを1〜10で採点。
+   教科書レベルの説明が中心なら5以下。reason に理由を一文で。
+JSONのみ: {{"ok":true,"problems":[""],"surprise":0,"reason":""}}"""
     return gemini(p)
 
 
@@ -363,19 +393,34 @@ def main():
     history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else []
     F = font()
 
-    print("1) テーマ選定"); t = pick_topic(history); topic = t["topic"]; print("   ", topic)
+    print("1) テーマ選定"); t = pick_topic(history); topic = t["topic"]; angle = t.get("angle", "")
+    print("   ", topic, "/", angle)
     print("2) 資料取得"); src = wiki(t["wiki_query"]); print("   ", src["title"], src["url"])
-    print("3) 台本作成と事実確認")
-    script, fb = None, ""
+    print("3) 台本作成と事実確認・へぇ度チェック")
+    script, fb, best = None, "", None
     for attempt in range(3):
-        script = write_script(topic, src, fb)
-        chk = fact_check(script, src)
-        if chk.get("ok"):
+        sc = write_script(topic, angle, src, fb)
+        chk = fact_check(sc, src)
+        facts_ok = bool(chk.get("ok"))
+        try:
+            sv = float(chk.get("surprise", 10))
+        except Exception:
+            sv = 10.0
+        print(f"   試行{attempt + 1}: 事実={'OK' if facts_ok else 'NG'} へぇ度={sv}/10 {chk.get('reason', '')}")
+        if facts_ok and sv >= 7:
+            script = sc
             break
+        if facts_ok and (best is None or sv > best[1]):
+            best = (sc, sv)
         fb = " / ".join(chk.get("problems", []))
-        print("   事実確認NG→再生成:", fb)
+        if sv < 7:
+            fb += f" / へぇ度が低い({sv}/10: {chk.get('reason', '')})。基本説明を減らし、資料内のもっと意外で具体的な事実を軸にする"
     else:
-        raise Fail("事実確認を通過できませんでした。指摘: " + fb)
+        if best:
+            script = best[0]
+            print(f"   へぇ度が基準(7)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
+        else:
+            raise Fail("事実確認を通過できませんでした。指摘: " + fb)
     scenes = script["scenes"]
 
     print("4) ナレーション生成")
