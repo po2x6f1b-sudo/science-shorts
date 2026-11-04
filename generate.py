@@ -407,18 +407,18 @@ def main():
         except Exception:
             sv = 10.0
         print(f"   試行{attempt + 1}: 事実={'OK' if facts_ok else 'NG'} へぇ度={sv}/10 {chk.get('reason', '')}")
-        if facts_ok and sv >= 7:
+        if facts_ok and sv >= 3:
             script = sc
             break
         if facts_ok and (best is None or sv > best[1]):
             best = (sc, sv)
         fb = " / ".join(chk.get("problems", []))
-        if sv < 7:
+        if sv < 3:
             fb += f" / へぇ度が低い({sv}/10: {chk.get('reason', '')})。基本説明を減らし、資料内のもっと意外で具体的な事実を軸にする"
     else:
         if best:
             script = best[0]
-            print(f"   へぇ度が基準(7)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
+            print(f"   へぇ度が基準(3)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
         else:
             raise Fail("事実確認を通過できませんでした。指摘: " + fb)
     scenes = script["scenes"]
