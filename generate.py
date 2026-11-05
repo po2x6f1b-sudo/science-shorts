@@ -5,6 +5,12 @@
 import os, re, sys, json, time, random, pathlib, subprocess, datetime, traceback, unicodedata
 import requests
 
+try:  # 実行ログをリアルタイムに表示する
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 W, H = 1080, 1920
 OUT, WORK, DATA = pathlib.Path("output"), pathlib.Path("work"), pathlib.Path("data")
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
@@ -96,33 +102,23 @@ def pick_topic(history):
     used = [h["topic"] for h in history][-200:]
     p = f"""あなたは「宇宙の意外な雑学」YouTubeショート動画の企画者です。
 テーマは、宇宙・天体・太陽系・地球と宇宙の関わり・探査機・望遠鏡など、NASAの画像や映像で表現できる題材に限ります。
+人物（宇宙飛行士など）が主役の話題は避けてください。
 
-【最重要】日本の一般の大人の多くが「知らなかった！」と驚く題材だけを選ぶこと。
-禁止: 教科書や雑学本の定番（宇宙は広い、月は少しずつ遠ざかる、太陽は恒星、地球は丸い、など）。
-求めるもの:
-- 常識の逆を行く事実、桁外れの数字、身近なものに例えると驚く比較（バナナの放射線のような話）
-- 「え、そうなの？」と思わず誰かに話したくなる一点
-- Wikipedia(日本語)の個別の記事に、その事実が書かれていそうなこと
+日本の一般の大人の多くが「知らなかった！」と驚く題材を選ぶこと。
+教科書や雑学本の定番（宇宙は広い、月は少しずつ遠ざかる、太陽は恒星、など）は避ける。
+常識の逆を行く事実、桁外れの数字、身近なものに例えると驚く比較（バナナの放射線のような話）が理想。
 
-候補を8個出し、それぞれ次を付ける:
 - topic: 動画テーマ(日本語、驚きが伝わる言い方)
 - angle: 動画で伝える一番意外な事実を1文で
-- wiki_query: Wikipedia日本語の個別記事名(例:「かに星雲」「ボイジャー1号」。「宇宙」のような広い語は不可)
-- surprise: 一般の日本人にとっての意外さ(1〜10、厳しく採点)
-- known: すでに知っている人の多さ(1〜10、厳しく採点)
+- wiki_query: Wikipedia日本語に実在する、天体・探査機・現象などの一般的な記事名(例:「かに星雲」「ボイジャー1号」)。人名は不可。
 すでに使ったテーマ（重複・類似は禁止）: {json.dumps(used, ensure_ascii=False)}
-JSONのみ: {{"candidates":[{{"topic":"","angle":"","wiki_query":"","surprise":0,"known":0}}]}}"""
-    cands = gemini(p).get("candidates", [])
-    if not cands:
-        raise Fail("テーマ候補が得られませんでした")
-    def score(c):
-        try:
-            return float(c.get("surprise", 0)) - float(c.get("known", 10))
-        except Exception:
-            return -99
-    cands.sort(key=score, reverse=True)
-    print("   候補:", [(c.get("topic"), c.get("surprise"), c.get("known")) for c in cands[:3]])
-    return cands[0]
+JSONのみ: {{"topic":"","angle":"","wiki_query":""}}"""
+    t = gemini(p)
+    if isinstance(t, list):
+        t = t[0] if t else {}
+    if not t.get("topic") or not t.get("wiki_query"):
+        raise Fail("テーマを決められませんでした")
+    return t
 
 
 # ---------- 2. 調査 ----------
@@ -132,15 +128,28 @@ def wiki(query):
         "action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 1}).json()
     hits = s.get("query", {}).get("search", [])
     if not hits:
-        raise Fail(f"Wikipediaに資料が見つかりません: {query}（出典なしでは作成しません）")
+        return None
     title = hits[0]["title"]
     e = requests.get(api, headers=UA, timeout=30, params={
         "action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "format": "json"}).json()
     page = next(iter(e["query"]["pages"].values()))
     text = (page.get("extract") or "")[:8000]
     if len(text) < 200:
-        raise Fail(f"資料が短すぎます: {title}")
+        return None
     return {"title": title, "url": "https://ja.wikipedia.org/wiki/" + requests.utils.quote(title), "text": text}
+
+
+def wiki_any(queries):
+    """検索語を言い換えながら探す(中黒を空白にする、かっこを外す、テーマ文で探す)"""
+    tried = []
+    for q in queries:
+        for v in (q, q.replace("・", " "), re.sub(r"[（(].*?[）)]", "", q).strip()):
+            if v and v not in tried:
+                tried.append(v)
+                r = wiki(v)
+                if r:
+                    return r
+    raise Fail("Wikipediaに資料が見つかりません: " + " / ".join(tried) + "（出典なしでは作成しません）")
 
 
 # ---------- 3-4. 台本と事実確認 ----------
@@ -174,13 +183,11 @@ JSONのみで返す:
 
 
 def fact_check(script, src):
-    p = f"""次の動画台本を、資料と照合して事実確認し、さらに「へぇ度」を採点してください。厳しく判定すること。
+    p = f"""次の動画台本を、資料と照合して事実確認してください。厳しく判定すること。
 【資料】{src['text']}
 【台本】{json.dumps([s['narration'] for s in script['scenes']], ensure_ascii=False)}
-1) 資料で裏付けられない数字・断定・誇張があれば problems に具体的に列挙。なければ ok=true。
-2) surprise: 日本の一般の大人がすでに知っている内容は低く評価し、「へぇ〜！知らなかった」と思う度合いを1〜10で採点。
-   教科書レベルの説明が中心なら5以下。reason に理由を一文で。
-JSONのみ: {{"ok":true,"problems":[""],"surprise":0,"reason":""}}"""
+資料で裏付けられない数字・断定・誇張があれば problems に具体的に列挙。なければ ok=true。
+JSONのみ: {{"ok":true,"problems":[""]}}"""
     return gemini(p)
 
 
@@ -507,32 +514,19 @@ def main():
     else:
         print("1) テーマ選定"); t = pick_topic(history); topic = t["topic"]; angle = t.get("angle", "")
         print("   ", topic, "/", angle)
-        print("2) 資料取得"); src = wiki(t["wiki_query"]); print("   ", src["title"], src["url"])
-        print("3) 台本作成と事実確認・へぇ度チェック")
-        script, fb, best = None, "", None
+        print("2) 資料取得"); src = wiki_any([t["wiki_query"], topic]); print("   ", src["title"], src["url"])
+        print("3) 台本作成と事実確認")
+        script, fb = None, ""
         for attempt in range(3):
             sc = write_script(topic, angle, src, fb)
             chk = fact_check(sc, src)
-            facts_ok = bool(chk.get("ok"))
-            try:
-                sv = float(chk.get("surprise", 10))
-            except Exception:
-                sv = 10.0
-            print(f"   試行{attempt + 1}: 事実={'OK' if facts_ok else 'NG'} へぇ度={sv}/10 {chk.get('reason', '')}")
-            if facts_ok and sv >= 3:
+            if chk.get("ok"):
                 script = sc
                 break
-            if facts_ok and (best is None or sv > best[1]):
-                best = (sc, sv)
             fb = " / ".join(chk.get("problems", []))
-            if sv < 3:
-                fb += f" / へぇ度が低い({sv}/10: {chk.get('reason', '')})。基本説明を減らし、資料内のもっと意外で具体的な事実を軸にする"
+            print("   事実確認NG→再生成:", fb)
         else:
-            if best:
-                script = best[0]
-                print(f"   へぇ度が基準(3)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
-            else:
-                raise Fail("事実確認を通過できませんでした。指摘: " + fb)
+            raise Fail("事実確認を通過できませんでした。指摘: " + fb)
         pend_path.write_text(json.dumps({"topic": topic, "script": script, "src": src, "tries": 1},
                                         ensure_ascii=False), encoding="utf-8")
         git_push("台本を一時保存")
