@@ -2,7 +2,7 @@
 """宇宙・科学・人体の雑学Shorts 自動生成 (Phase 1)
 台本→VOICEVOX音声→Pexels映像→字幕→BGM/効果音→MP4→サムネ→メタ情報
 """
-import os, re, sys, json, time, random, pathlib, subprocess, datetime, traceback
+import os, re, sys, json, time, random, pathlib, subprocess, datetime, traceback, unicodedata
 import requests
 
 W, H = 1080, 1920
@@ -17,6 +17,30 @@ UA = {"User-Agent": "science-shorts/0.1 (personal hobby project)"}
 
 class Fail(Exception):
     pass
+
+
+def clean(t):
+    """目に見えない特殊文字・絵文字など、字幕で文字化け(□)の原因になる文字を除去する"""
+    t = unicodedata.normalize("NFKC", str(t))
+    out, removed = [], []
+    for c in t:
+        cat = unicodedata.category(c)
+        if c == "\n" or cat[0] in "LNP" or cat in ("Zs", "Sm", "Sc", "Sk") and c.isprintable():
+            out.append(c)
+        else:
+            removed.append(f"U+{ord(c):04X}")
+    if removed:
+        print("   除去した文字:", " ".join(removed))
+    return "".join(out)
+
+
+def git_push(msg):
+    for c in (["git", "config", "user.name", "github-actions"], ["git", "config", "user.email", "actions@github.com"],
+              ["git", "add", "-A", "data"], ["git", "commit", "-m", msg], ["git", "push"]):
+        try:
+            subprocess.run(c, capture_output=True, text=True, timeout=60)
+        except Exception as e:
+            print("   git操作に失敗(無視):", e)
 
 
 def run(cmd):
@@ -387,41 +411,94 @@ def thumbnail(title, F):
          "x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=16", "-q:v", "3", str(OUT / "thumbnail.jpg")])
 
 
+def preflight():
+    """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
+    print("0) 事前チェック（Geminiは使いません）")
+    def step(name, fn):
+        try:
+            r = fn()
+            print(f"   OK: {name}")
+            return r
+        except Fail as e:
+            raise Fail(f"【事前チェック失敗】{name}: {e}（Geminiは使っていません）")
+        except Exception as e:
+            raise Fail(f"【事前チェック失敗】{name}: {e}（Geminiは使っていません）")
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise Fail("【事前チェック失敗】GEMINI_API_KEY が設定されていません")
+    F = step("日本語フォント", font)
+    tf = WORK / "pf.txt"
+    tf.write_text("事前チェック「テスト」・ー", encoding="utf-8")
+    step("動画合成(字幕の描画)", lambda: run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x120", "-vf",
+         f"drawtext=fontfile={F}:textfile='{tf}':fontsize=30:fontcolor=white", "-frames:v", "1", str(WORK / "pf.png")]))
+    def vv():
+        sp, _ = pick_speaker()
+        return tts("事前チェックです。", sp, WORK / "pf.wav")
+    step("VOICEVOX(音声合成)", vv)
+    try:
+        r = requests.get("https://images-api.nasa.gov/search", headers=UA, timeout=30,
+                         params={"q": "nebula", "media_type": "image", "page_size": 1})
+        print("   OK: NASA素材ライブラリ" if r.status_code == 200 else f"   警告: NASAが応答しません({r.status_code})→背景のみで作成します")
+    except Exception as e:
+        print("   警告: NASAに接続できません→背景のみで作成します:", e)
+    return F
+
+
 def main():
     OUT.mkdir(exist_ok=True); WORK.mkdir(exist_ok=True); DATA.mkdir(exist_ok=True)
     hist_path = DATA / "history.json"
     history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else []
-    F = font()
+    F = preflight()
 
-    print("1) テーマ選定"); t = pick_topic(history); topic = t["topic"]; angle = t.get("angle", "")
-    print("   ", topic, "/", angle)
-    print("2) 資料取得"); src = wiki(t["wiki_query"]); print("   ", src["title"], src["url"])
-    print("3) 台本作成と事実確認・へぇ度チェック")
-    script, fb, best = None, "", None
-    for attempt in range(3):
-        sc = write_script(topic, angle, src, fb)
-        chk = fact_check(sc, src)
-        facts_ok = bool(chk.get("ok"))
+    pend_path = DATA / "pending.json"
+    pend = None
+    if pend_path.exists():
         try:
-            sv = float(chk.get("surprise", 10))
+            pend = json.loads(pend_path.read_text(encoding="utf-8"))
         except Exception:
-            sv = 10.0
-        print(f"   試行{attempt + 1}: 事実={'OK' if facts_ok else 'NG'} へぇ度={sv}/10 {chk.get('reason', '')}")
-        if facts_ok and sv >= 3:
-            script = sc
-            break
-        if facts_ok and (best is None or sv > best[1]):
-            best = (sc, sv)
-        fb = " / ".join(chk.get("problems", []))
-        if sv < 3:
-            fb += f" / へぇ度が低い({sv}/10: {chk.get('reason', '')})。基本説明を減らし、資料内のもっと意外で具体的な事実を軸にする"
+            pend = None
+    if pend and pend.get("tries", 0) < 2:
+        topic, script, src = pend["topic"], pend["script"], pend["src"]
+        pend["tries"] = pend.get("tries", 0) + 1
+        pend_path.write_text(json.dumps(pend, ensure_ascii=False), encoding="utf-8")
+        print("前回の台本を再利用します（Geminiは使いません）:", topic)
     else:
-        if best:
-            script = best[0]
-            print(f"   へぇ度が基準(3)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
+        print("1) テーマ選定"); t = pick_topic(history); topic = t["topic"]; angle = t.get("angle", "")
+        print("   ", topic, "/", angle)
+        print("2) 資料取得"); src = wiki(t["wiki_query"]); print("   ", src["title"], src["url"])
+        print("3) 台本作成と事実確認・へぇ度チェック")
+        script, fb, best = None, "", None
+        for attempt in range(3):
+            sc = write_script(topic, angle, src, fb)
+            chk = fact_check(sc, src)
+            facts_ok = bool(chk.get("ok"))
+            try:
+                sv = float(chk.get("surprise", 10))
+            except Exception:
+                sv = 10.0
+            print(f"   試行{attempt + 1}: 事実={'OK' if facts_ok else 'NG'} へぇ度={sv}/10 {chk.get('reason', '')}")
+            if facts_ok and sv >= 3:
+                script = sc
+                break
+            if facts_ok and (best is None or sv > best[1]):
+                best = (sc, sv)
+            fb = " / ".join(chk.get("problems", []))
+            if sv < 3:
+                fb += f" / へぇ度が低い({sv}/10: {chk.get('reason', '')})。基本説明を減らし、資料内のもっと意外で具体的な事実を軸にする"
         else:
-            raise Fail("事実確認を通過できませんでした。指摘: " + fb)
+            if best:
+                script = best[0]
+                print(f"   へぇ度が基準(3)未満ですが、事実は確認済みのため採用します({best[1]}/10)")
+            else:
+                raise Fail("事実確認を通過できませんでした。指摘: " + fb)
+        pend_path.write_text(json.dumps({"topic": topic, "script": script, "src": src, "tries": 1},
+                                        ensure_ascii=False), encoding="utf-8")
+        git_push("台本を一時保存")
     scenes = script["scenes"]
+    for sc in scenes:
+        sc["narration"] = clean(sc["narration"]); sc["emphasis"] = clean(sc["emphasis"])
+    script["titles"] = [clean(x) for x in script["titles"]]
+    script["description"] = clean(script.get("description", ""))
+    script["pinned_comment"] = clean(script.get("pinned_comment", ""))
 
     print("4) ナレーション生成")
     speaker, vname = pick_speaker()
@@ -478,6 +555,8 @@ def main():
     history.append({"date": datetime.date.today().isoformat(), "topic": topic,
                     "title": script["titles"][0], "source": src["url"]})
     hist_path.write_text(json.dumps(history, ensure_ascii=False, indent=1), encoding="utf-8")
+    pend_path.unlink(missing_ok=True)
+    git_push("履歴更新")
     print("完了:", OUT / "video.mp4")
 
 
