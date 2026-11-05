@@ -167,6 +167,7 @@ def write_script(topic, angle, src, feedback=""):
 - 冒頭は、具体的な数字か、常識を覆す一言で始める（「〇〇って知ってた？」の定型だけにしない）。
 - 資料にある具体的な数字を2〜3個使い、身近なものに例えて実感させる。例えは資料の数値からの単純な換算に限り、断定しすぎない。
 - 一般論や感想（「神秘的ですね」など）で字数を埋めない。1シーン1情報。
+- 数字は資料の値をそのまま使い、丸めるときは「約」を付ける。資料にない比較（〜より大きい、〜をも凌ぐ等）を事実として言わない。例えは「たとえるなら」と分かる形にする。
 - 難しい専門用語には短い説明を添える。引き延ばしや繰り返しは禁止。
 - 6〜8シーンに分割。1シーンのnarrationは20〜60文字。
 - emphasis: 画面に大きく出すキーワード(8文字以内)。
@@ -183,12 +184,30 @@ JSONのみで返す:
 
 
 def fact_check(script, src):
-    p = f"""次の動画台本を、資料と照合して事実確認してください。厳しく判定すること。
+    p = f"""次の動画台本を、資料と照合して事実確認してください。
 【資料】{src['text']}
 【台本】{json.dumps([s['narration'] for s in script['scenes']], ensure_ascii=False)}
-資料で裏付けられない数字・断定・誇張があれば problems に具体的に列挙。なければ ok=true。
+次の「重大な問題」だけを problems に挙げる。なければ ok=true。
+- 資料と矛盾する内容
+- 資料にない数字・固有名詞・出来事を、事実として断定している
+- 数字の桁や単位の誤り
+次は問題にしない: 「約」「およそ」を付けた丸め、単位の言い換え(万→億など)、資料の内容を言い換えた表現、
+「たとえるなら」など比喩だと分かる例え、細かな言い回しの好み。
 JSONのみ: {{"ok":true,"problems":[""]}}"""
     return gemini(p)
+
+
+def repair_script(script, src, problems):
+    """指摘された部分だけを、資料に書かれている範囲に直す"""
+    p = f"""次の動画台本の JSON を修正してください。
+【資料】{src['text']}
+【指摘された問題】{problems}
+ルール: 指摘された部分は、資料に書かれている表現と数字に直すか、裏付けのない部分を削除する。
+断定できない比較や数字は入れない。それ以外の部分・構成・シーン数は変えない。
+【台本JSON】{json.dumps(script, ensure_ascii=False)}
+同じ形式のJSONのみで返す。"""
+    r = gemini(p)
+    return r if isinstance(r, dict) and r.get("scenes") else script
 
 
 # ---------- 5. 音声 ----------
@@ -526,7 +545,9 @@ def main():
             fb = " / ".join(chk.get("problems", []))
             print("   事実確認NG→再生成:", fb)
         else:
-            raise Fail("事実確認を通過できませんでした。指摘: " + fb)
+            print("   3回確認しても指摘が残るため、指摘箇所を資料の範囲に自動修正します")
+            script = repair_script(sc, src, fb)
+            script["check_notes"] = fb
         pend_path.write_text(json.dumps({"topic": topic, "script": script, "src": src, "tries": 1},
                                         ensure_ascii=False), encoding="utf-8")
         git_push("台本を一時保存")
@@ -585,6 +606,8 @@ def main():
            "※ナレーションはAI音声を使用しています。", "", " ".join(script["hashtags"]), "",
            "## 固定コメント案", script["pinned_comment"], "",
            "## 事実確認メモ（投稿前に目視確認してください）"] + [f"- {x}" for x in script.get("facts", [])]
+    if script.get("check_notes"):
+        md += ["", "## 要確認（自動チェックで指摘が残った点。投稿前に必ず確認）", script["check_notes"]]
     md += ["", "## 映像クレジット（投稿前に、NASAロゴ・人物・他社の表記が映っていないか目視確認）"] + [f"- {c}" for c in credits]
     md += ["", f"長さ(ナレーション): {voice_total:.1f}秒 / 合成後: {t0:.1f}秒"]
     (OUT / "metadata.md").write_text("\n".join(md), encoding="utf-8")
