@@ -297,6 +297,33 @@ def wrap(s, n):
     return "\n".join(s[i:i + n] for i in range(0, len(s), n))
 
 
+def split_lines(s, n):
+    """改行記号を使わず1行ずつ描くための分割(新しいffmpegで改行が□になる問題の回避)。
+    行の長さをそろえ、助詞や句読点の後ろで区切り、1文字だけ残るのを避ける"""
+    s = s.strip()
+    if len(s) <= n:
+        return [s]
+    k = -(-len(s) // n)
+    out, rest = [], s
+    for left in range(k, 1, -1):
+        target = -(-len(rest) // left)
+        best = None
+        for idx in range(max(2, target - 3), min(n, target + 3) + 1):
+            if idx >= len(rest) or len(rest) - idx > n * (left - 1):
+                continue
+            nxt = rest[idx]
+            if nxt in "。、」』）・ーっゃゅょぁぃぅぇぉ":
+                continue
+            score = abs(idx - target) + (0 if rest[idx - 1] in "、。はがをにでとのもへやて" else 2)
+            if best is None or score < best[0]:
+                best = (score, idx)
+        idx = best[1] if best else min(n, target)
+        out.append(rest[:idx])
+        rest = rest[idx:]
+    out.append(rest)
+    return out
+
+
 def chunks(text, limit=26):
     parts = re.findall(r"[^。、！？!?]+[。、！？!?]?", text) or [text]
     out, buf = [], ""
@@ -320,16 +347,24 @@ def probe(path):
 
 def render_scene(i, sc, bg, wav, dur, F):
     total = dur + 0.15
-    ef = WORK / f"s{i}_e.txt"
-    ef.write_text(wrap(sc["emphasis"], 8), encoding="utf-8")
+    elines = split_lines(sc["emphasis"], 8)
+    efs = []
+    for k, ln in enumerate(elines):
+        ef = WORK / f"s{i}_e{k}.txt"
+        ef.write_text(ln, encoding="utf-8")
+        efs.append(ef)
     cs = chunks(sc["narration"])
     n_all = sum(len(c) for c in cs)
     t, subs = 0.1, []
     for k, c in enumerate(cs):
         span = (dur - 0.3) * len(c) / n_all
-        f = WORK / f"s{i}_c{k}.txt"
-        f.write_text(wrap(c, 14), encoding="utf-8")
-        subs.append((f, t, t + span))
+        lns = split_lines(c, 14)
+        fl = []
+        for j, ln in enumerate(lns):
+            f = WORK / f"s{i}_c{k}_{j}.txt"
+            f.write_text(ln, encoding="utf-8")
+            fl.append(f)
+        subs.append((fl, t, t + span))
         t += span
     is_img = bool(bg) and str(bg).lower().endswith((".jpg", ".jpeg", ".png"))
     ss = []
@@ -348,13 +383,17 @@ def render_scene(i, sc, bg, wav, dur, F):
         base = ("[0:v]scale=1242:2208:force_original_aspect_ratio=increase,"
                 "crop=1080:1920:x='(iw-1080)/2+sin(t*0.8)*40':y='(ih-1920)/2+cos(t*0.6)*40',"
                 "fps=30,setsar=1,")
-    vf = (base + "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,"
-          f"drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
-          "bordercolor=black:x=(w-text_w)/2:y=260:line_spacing=16:alpha='min(1,t/0.25)'")
-    for f, a, b in subs:
-        vf += (f",drawtext=fontfile={F}:textfile='{f}':fontsize=58:fontcolor=white:box=1:"
-               f"boxcolor=black@0.6:boxborderw=22:x=(w-text_w)/2:y=1360:line_spacing=14:"
-               f"enable='between(t,{a:.2f},{b:.2f})'")
+    vf = base + "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill"
+    for k, ef in enumerate(efs):
+        vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
+               f"bordercolor=black:x=(w-text_w)/2:y={260 + k * 124}:alpha='min(1,t/0.25)'")
+    if subs:
+        vf += f",drawbox=x=0:y=1330:w=iw:h=250:color=black@0.55:t=fill:enable='between(t,0.05,{subs[-1][2] + 0.1:.2f})'"
+    for fl, a, b in subs:
+        y0 = 1455 - 42 * len(fl)
+        for j, f in enumerate(fl):
+            vf += (f",drawtext=fontfile={F}:textfile='{f}':fontsize=58:fontcolor=white:borderw=3:bordercolor=black:"
+                   f"x=(w-text_w)/2:y={y0 + j * 84}:enable='between(t,{a:.2f},{b:.2f})'")
     vf += ",format=yuv420p[v]"
     if not bg:
         inp = ["-f", "lavfi", "-i", "gradients=s=1080x1920:c0=0x02030a:c1=0x0a3550:x0=0:y0=0:x1=1080:y1=1920:speed=0.02"]
@@ -403,12 +442,16 @@ def assemble(scenes_files, starts, total):
 
 # ---------- 12. サムネイル ----------
 def thumbnail(title, F):
-    tf = WORK / "thumb.txt"
-    tf.write_text(wrap(title, 11), encoding="utf-8")
-    run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(OUT / "video.mp4"), "-frames:v", "1", "-vf",
-         "scale=1280:-1,crop=1280:720,eq=brightness=-0.15,"
-         f"drawtext=fontfile={F}:textfile='{tf}':fontsize=96:fontcolor=0xFFE14D:borderw=8:bordercolor=black:"
-         "x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=16", "-q:v", "3", str(OUT / "thumbnail.jpg")])
+    lns = split_lines(title, 11)[:3]
+    vf = "scale=1280:-1,crop=1280:720,eq=brightness=-0.15"
+    y0 = 360 - 60 * len(lns)
+    for k, ln in enumerate(lns):
+        tf = WORK / f"thumb{k}.txt"
+        tf.write_text(ln, encoding="utf-8")
+        vf += (f",drawtext=fontfile={F}:textfile='{tf}':fontsize=96:fontcolor=0xFFE14D:borderw=8:"
+               f"bordercolor=black:x=(w-text_w)/2:y={y0 + k * 120}")
+    run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(OUT / "video.mp4"), "-frames:v", "1", "-vf", vf,
+         "-q:v", "3", str(OUT / "thumbnail.jpg")])
 
 
 def preflight():
