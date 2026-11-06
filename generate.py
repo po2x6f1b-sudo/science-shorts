@@ -163,8 +163,11 @@ def write_script(topic, angle, src, feedback=""):
 条件:
 - ナレーション合計 260〜330文字（約45〜55秒）。自然な話し言葉の日本語。
 - 構成: 冒頭2秒で驚かせる問いかけ → 意外な事実 → 理由の解説 → 余韻のある結び
+- 【1シーン目の形】narrationは、最も意外な事実を1文で述べ、「〜なのを知っていましたか？」または「〜ことを知っていましたか？」で終える(25〜45文字)。
+  1シーン目のemphasisは、その事実の核心を短い言葉にする(12文字以内)。この画面が動画のサムネイルになる。
 - 【質の条件】日本の一般の大人がすでに知っている基本説明で尺を使わない。「みんなが思っていること」→「実は違う／もっと桁外れ」の落差を作る。
-- 冒頭は、具体的な数字か、常識を覆す一言で始める（「〇〇って知ってた？」の定型だけにしない）。
+- 【冒頭の型】1シーン目のnarrationは、必ず「〇〇なのを知っていましたか？」の形にする（〇〇は、この動画で一番意外な事実を、短く具体的に言い切る。例:「太陽の光が、地球に届くまでに約8分かかる」ではなく、驚きの核心を一文で）。1シーン目はこの一文だけにする。
+- 1シーン目のemphasisは、その驚きの核心を表す短い言葉(8文字以内)にする。これが動画の表紙(サムネイル)になる。
 - 資料にある具体的な数字を2〜3個使い、身近なものに例えて実感させる。例えは資料の数値からの単純な換算に限り、断定しすぎない。
 - 一般論や感想（「神秘的ですね」など）で字数を埋めない。1シーン1情報。
 - 数字は資料の値をそのまま使い、丸めるときは「約」を付ける。資料にない比較（〜より大きい、〜をも凌ぐ等）を事実として言わない。例えは「たとえるなら」と分かる形にする。
@@ -360,7 +363,13 @@ def chunks(text, limit=26):
         buf += p
     if buf:
         out.append(buf)
-    return out
+    res = []
+    for c in out:  # 長すぎる区切りは、2行に収まるよう半分ずつに分ける
+        if len(c) > 28:
+            res += split_lines(c, -(-len(c) // 2))
+        else:
+            res.append(c)
+    return res
 
 
 
@@ -373,7 +382,7 @@ def probe(path):
 
 def render_scene(i, sc, bg, wav, dur, F):
     total = dur + 0.15
-    elines = split_lines(sc["emphasis"], 8)
+    elines = split_lines(sc["emphasis"], 7 if i == 0 else 8)
     efs = []
     for k, ln in enumerate(elines):
         ef = WORK / f"s{i}_e{k}.txt"
@@ -410,9 +419,19 @@ def render_scene(i, sc, bg, wav, dur, F):
                 "crop=1080:1920:x='(iw-1080)/2+sin(t*0.8)*40':y='(ih-1920)/2+cos(t*0.6)*40',"
                 "fps=30,setsar=1,")
     vf = base + "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill"
-    for k, ef in enumerate(efs):
-        vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
-               f"bordercolor=black:x=(w-text_w)/2:y={260 + k * 124}:alpha='min(1,t/0.25)'")
+    if i == 0:
+        y0 = 430
+        for k, ef in enumerate(efs):
+            vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=124:fontcolor=0xFFE14D:borderw=10:"
+                   f"bordercolor=black:x=(w-text_w)/2:y={y0 + k * 150}")
+        tg = WORK / "s0_tag.txt"
+        tg.write_text("知っていましたか？", encoding="utf-8")
+        vf += (f",drawtext=fontfile={F}:textfile='{tg}':fontsize=84:fontcolor=white:borderw=8:"
+               f"bordercolor=black:x=(w-text_w)/2:y={y0 + len(efs) * 150 + 20}")
+    else:
+        for k, ef in enumerate(efs):
+            vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
+                   f"bordercolor=black:x=(w-text_w)/2:y={260 + k * 124}:alpha='min(1,t/0.25)'")
     if subs:
         vf += f",drawbox=x=0:y=1330:w=iw:h=250:color=black@0.55:t=fill:enable='between(t,0.05,{subs[-1][2] + 0.1:.2f})'"
     for fl, a, b in subs:
@@ -468,16 +487,9 @@ def assemble(scenes_files, starts, total):
 
 # ---------- 12. サムネイル ----------
 def thumbnail(title, F):
-    lns = split_lines(title, 11)[:3]
-    vf = "scale=1280:-1,crop=1280:720,eq=brightness=-0.15"
-    y0 = 360 - 60 * len(lns)
-    for k, ln in enumerate(lns):
-        tf = WORK / f"thumb{k}.txt"
-        tf.write_text(ln, encoding="utf-8")
-        vf += (f",drawtext=fontfile={F}:textfile='{tf}':fontsize=96:fontcolor=0xFFE14D:borderw=8:"
-               f"bordercolor=black:x=(w-text_w)/2:y={y0 + k * 120}")
-    run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(OUT / "video.mp4"), "-frames:v", "1", "-vf", vf,
-         "-q:v", "3", str(OUT / "thumbnail.jpg")])
+    """動画の冒頭の画面(縦 1080x1920)をそのままサムネイル画像にする"""
+    run(["ffmpeg", "-y", "-ss", "0.6", "-i", str(OUT / "video.mp4"), "-frames:v", "1", "-q:v", "2",
+         str(OUT / "thumbnail.jpg")])
 
 
 def preflight():
@@ -609,6 +621,8 @@ def main():
     if script.get("check_notes"):
         md += ["", "## 要確認（自動チェックで指摘が残った点。投稿前に必ず確認）", script["check_notes"]]
     md += ["", "## 映像クレジット（投稿前に、NASAロゴ・人物・他社の表記が映っていないか目視確認）"] + [f"- {c}" for c in credits]
+    md += ["", "## サムネイルのヒント",
+           "YouTubeの投稿画面でサムネイル(フレーム)を選ぶとき、動画の最初(0〜3秒)を選ぶと、大きな文字の問いかけ画面になります。"]
     md += ["", f"長さ(ナレーション): {voice_total:.1f}秒 / 合成後: {t0:.1f}秒"]
     (OUT / "metadata.md").write_text("\n".join(md), encoding="utf-8")
     (OUT / "title.txt").write_text(script["titles"][0], encoding="utf-8")
