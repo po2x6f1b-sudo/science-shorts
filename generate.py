@@ -122,21 +122,27 @@ JSONのみ: {{"topic":"","angle":"","wiki_query":""}}"""
 
 
 # ---------- 2. 調査 ----------
+SPACE_WORDS = re.compile(r"宇宙|天体|惑星|恒星|銀河|太陽|月面|衛星|探査|望遠鏡|軌道|星雲|彗星|小惑星|ブラックホール|NASA|光年|天文")
+
+
 def wiki(query):
+    """検索上位5件のうち、宇宙・天文の記事だけを採用する(鉄道や人名など無関係な記事を避ける)"""
     api = "https://ja.wikipedia.org/w/api.php"
     s = requests.get(api, headers=UA, timeout=30, params={
-        "action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 1}).json()
-    hits = s.get("query", {}).get("search", [])
-    if not hits:
-        return None
-    title = hits[0]["title"]
-    e = requests.get(api, headers=UA, timeout=30, params={
-        "action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "format": "json"}).json()
-    page = next(iter(e["query"]["pages"].values()))
-    text = (page.get("extract") or "")[:8000]
-    if len(text) < 200:
-        return None
-    return {"title": title, "url": "https://ja.wikipedia.org/wiki/" + requests.utils.quote(title), "text": text}
+        "action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 5}).json()
+    for h in s.get("query", {}).get("search", []):
+        title = h["title"]
+        e = requests.get(api, headers=UA, timeout=30, params={
+            "action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "format": "json"}).json()
+        page = next(iter(e["query"]["pages"].values()))
+        text = (page.get("extract") or "")[:8000]
+        if len(text) < 200:
+            continue
+        if len(SPACE_WORDS.findall(text[:4000])) < 6:
+            print(f"   除外(宇宙と無関係な記事): {title}")
+            continue
+        return {"title": title, "url": "https://ja.wikipedia.org/wiki/" + requests.utils.quote(title), "text": text}
+    return None
 
 
 def wiki_any(queries):
@@ -161,22 +167,21 @@ def write_script(topic, angle, src, feedback=""):
 {src['text']}
 
 条件:
-- ナレーション合計 260〜330文字（約45〜55秒）。自然な話し言葉の日本語。
+- ナレーション合計 170〜210文字（約28〜33秒）。これより長くしない。自然な話し言葉の日本語。
+- テンポ重視: 前置きや言い換えの繰り返しを入れず、1文ごとに新しい情報を出す。
 - 構成: 冒頭2秒で驚かせる問いかけ → 意外な事実 → 理由の解説 → 余韻のある結び
-- 【1シーン目の形】narrationは、最も意外な事実を1文で述べ、「〜なのを知っていましたか？」または「〜ことを知っていましたか？」で終える(25〜45文字)。
+- 【1シーン目の形】narrationは、最も意外な事実を1文で述べ、「〜なのを知っていましたか？」または「〜ことを知っていましたか？」で終える(20〜35文字。短く、冒頭の2秒で引き込む)。1シーン目はこの一文だけにする。
   1シーン目のemphasisは、その事実の核心を短い言葉にする(12文字以内)。この画面が動画のサムネイルになる。
 - 【質の条件】日本の一般の大人がすでに知っている基本説明で尺を使わない。「みんなが思っていること」→「実は違う／もっと桁外れ」の落差を作る。
-- 【冒頭の型】1シーン目のnarrationは、必ず「〇〇なのを知っていましたか？」の形にする（〇〇は、この動画で一番意外な事実を、短く具体的に言い切る。例:「太陽の光が、地球に届くまでに約8分かかる」ではなく、驚きの核心を一文で）。1シーン目はこの一文だけにする。
-- 1シーン目のemphasisは、その驚きの核心を表す短い言葉(8文字以内)にする。これが動画の表紙(サムネイル)になる。
 - 資料にある具体的な数字を2〜3個使い、身近なものに例えて実感させる。例えは資料の数値からの単純な換算に限り、断定しすぎない。
 - 一般論や感想（「神秘的ですね」など）で字数を埋めない。1シーン1情報。
 - 数字は資料の値をそのまま使い、丸めるときは「約」を付ける。資料にない比較（〜より大きい、〜をも凌ぐ等）を事実として言わない。例えは「たとえるなら」と分かる形にする。
 - 難しい専門用語には短い説明を添える。引き延ばしや繰り返しは禁止。
-- 6〜8シーンに分割。1シーンのnarrationは20〜60文字。
+- 4〜6シーンに分割。1シーンのnarrationは20〜45文字。
 - emphasis: 画面に大きく出すキーワード(8文字以内)。
 - pexels_query: Pexelsで映像を探す英語の検索語(2〜3語、具体的)。
 - nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
-- titles: クリックしたくなるタイトル3案(各30文字以内)
+- titles: クリックしたくなるタイトル3案(各30文字以内。誤字・誤変換がないか確認する)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
 {('前回の指摘(必ず修正): ' + feedback) if feedback else ''}
@@ -601,6 +606,8 @@ def main():
         items.append((sc, bg, wav, dur))
     voice_total = sum(d for *_, d in items)
     print(f"   ナレーション合計 {voice_total:.1f} 秒")
+    if voice_total > 40:
+        print("   注意: 目標の30秒前後より長めです。次回の改善の参考にしてください")
 
     print("5) シーン合成")
     files, starts, t0 = [], [], 0.0
