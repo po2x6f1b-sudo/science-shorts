@@ -826,6 +826,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
+    print("プログラムのバージョン: ピクセルアート版 v3 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -852,7 +853,8 @@ def preflight():
             step("ピクセルアート描画", lambda: [px_frame({"type": t, "a": "earth", "b": "moon"}, 0.5, _stars())
                                             for t in ("single", "orbit", "compare", "travel")])
         else:
-            print("   警告: ピクセル描画の部品(Pillow/numpy)が使えません→NASA素材で作成します")
+            raise Fail("【事前チェック失敗】ピクセル描画の部品(Pillow/numpy)が入りません（Geminiは使っていません）。"
+                       "ワークフローの「pip install requests」の行を「pip install requests pillow numpy」に変えてください")
     try:
         r = requests.get("https://images-api.nasa.gov/search", headers=UA, timeout=30,
                          params={"q": "nebula", "media_type": "image", "page_size": 1})
@@ -915,7 +917,7 @@ def main():
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
-        if VISUAL_MODE == "pixel" and PX_OK:
+        if VISUAL_MODE == "pixel":
             spec = px_spec(sc.get("pixel"), i == 0)
             pxp = WORK / f"px{i}.mp4"
             px_labels_map[i] = px_render(spec, dur + 0.5, pxp)
