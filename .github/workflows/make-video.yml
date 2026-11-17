@@ -16,8 +16,8 @@ jobs:
       - name: 準備
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
-          pip install requests
+          sudo apt-get install -y ffmpeg fonts-noto-cjk python3-numpy python3-pil
+          pip install requests || true
       - name: VOICEVOX起動待ち
         run: |
           for i in $(seq 1 60); do
