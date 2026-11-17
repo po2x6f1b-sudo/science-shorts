@@ -187,8 +187,9 @@ def write_script(topic, angle, src, feedback=""):
 - nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
 - pixel: そのシーンの映像（ピクセルアート）の指定。type は次のどれか:
   single(aの天体を1つ見せる) / orbit(aの周りをbが回る。例: a=earth,b=moon) / compare(aとbの大きさ比べ。太陽・惑星・月だけ) / travel(ロケットがaへ向かう。距離や到達の話)。
-  a と b は次の名前から選ぶ: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, rocket, satellite, comet, galaxy, asteroid, star。
-  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。内容に合う名前がなければ、a=star にする。
+  a と b は次の名前から選ぶ: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, rocket, satellite, comet, galaxy, asteroid, meteor。
+  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。内容に合う名前がなければ、a を空にする（星空だけの背景になる）。無理に当てはめない。
+  流れ星・隕石の話は a=meteor、彗星は a=comet、ロケットの打ち上げは a=rocket を使う。
 - titles: クリックしたくなるタイトル3案(各30文字以内。専門用語や数字の羅列だけにせず、誰でも気になる疑問や驚きの形にする。誤字・誤変換がないか確認する)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
@@ -355,7 +356,7 @@ VISUAL_MODE = os.environ.get("VISUAL_MODE", "pixel")  # pixel=ピクセルアー
 PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "地球", "moon": "月", "mars": "火星",
             "jupiter": "木星", "saturn": "土星", "uranus": "天王星", "neptune": "海王星", "black_hole": "ブラックホール",
             "rocket": "ロケット", "satellite": "人工衛星", "comet": "彗星", "galaxy": "銀河", "asteroid": "小惑星",
-            "star": "星"}
+            "meteor": "流れ星"}
 # 直径(km)。大きさ比べは、この表から正確な倍率を計算する
 PX_DIAM = {"sun": 1392700, "mercury": 4879, "venus": 12104, "earth": 12742, "moon": 3474, "mars": 6779,
            "jupiter": 139820, "saturn": 116460, "uranus": 50724, "neptune": 49244}
@@ -509,12 +510,47 @@ def _make_sprite(name, r):
         yy, xx = np.mgrid[0:m, 0:m]
         arr[np.hypot(xx - hx, yy - hy) <= max(2, r * 0.6)] = (235, 245, 255, 255)
         return Image.fromarray(arr, "RGBA")
+    if name == "meteor":
+        m = 6 * r + 1
+        arr = np.zeros((m, m, 4), np.uint8)
+        hx, hy, L = r, 5 * r, int(5 * r)
+        for k in range(L):
+            f = 1 - k / L
+            w = max(0, int(r * 0.35 * f))
+            c = (255, int(150 + 100 * f), int(60 + 170 * f))
+            for q in range(-w, w + 1):
+                x, y = hx + k + q, hy - k + q
+                if 0 <= x < m and 0 <= y < m:
+                    arr[y, x] = (*c, int(255 * f ** 0.7))
+        yy, xx = np.mgrid[0:m, 0:m]
+        arr[np.hypot(xx - hx, yy - hy) <= max(2, r * 0.45)] = (255, 250, 230, 255)
+        return Image.fromarray(arr, "RGBA")
     if name == "star":
         im = Image.new("RGBA", (5, 5), (0, 0, 0, 0)); px = im.load()
         for x, y in [(2, 0), (2, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (2, 3), (2, 4)]:
             px[x, y] = (255, 240, 150, 255)
         return im.resize((5 * max(1, r // 5), 5 * max(1, r // 5)), Image.NEAREST)
     return _planet(name, r)
+
+
+PIXEL_FONT_URLS = ["https://github.com/google/fonts/raw/main/ofl/dotgothic16/DotGothic16-Regular.ttf",
+                   "https://raw.githubusercontent.com/google/fonts/main/ofl/dotgothic16/DotGothic16-Regular.ttf"]
+
+
+def get_pixel_font():
+    """日本語のドット文字(DotGothic16 / SIL OFL・商用利用可)を取得する。失敗したらNone"""
+    path = WORK / "DotGothic16-Regular.ttf"
+    if path.exists() and path.stat().st_size > 100000:
+        return str(path.resolve())
+    for u in PIXEL_FONT_URLS:
+        try:
+            r = requests.get(u, headers=UA, timeout=60)
+            if r.status_code == 200 and len(r.content) > 100000 and r.content[:4] in (b"\x00\x01\x00\x00", b"true", b"OTTO"):
+                path.write_bytes(r.content)
+                return str(path.resolve())
+        except Exception as e:
+            print("   フォント取得失敗:", e)
+    return None
 
 
 def sprite(name, r):
@@ -588,7 +624,23 @@ def px_frame(spec, t, stars):
     for sx, sy, ph in stars:
         v = 140 + int(100 * math.sin(t * 2.2 + ph))
         arr[int(sy + t * speed) % PX_H, sx] = (v, v, min(255, v + 40))
-    if typ == "single":
+    if typ == "single" and a in ("meteor", "comet"):
+        r = 10 if a == "meteor" else 12
+        ph = (t % 2.6) / 2.6
+        y0, y1 = (110, 160) if spec.get("first") else (80, 160)
+        blit(arr, sprite(a, r), 150 + (-15 - 150) * ph, y0 + (y1 - y0) * ph)
+    elif typ == "single" and a == "rocket":
+        ph = (t % 3.0) / 3.0
+        ry = 158 - 80 * ph
+        blit(arr, sprite("rocket", 15), 67, ry)
+        fl = 4 + (int(t * 12) % 2) * 3
+        y1 = int(ry) + 12
+        arr[y1:y1 + fl, 64:70] = (255, 190, 60)
+        arr[y1:y1 + max(1, fl - 2), 65:69] = (255, 245, 170)
+    elif typ == "single" and a == "satellite":
+        ph = (t % 6.0) / 6.0
+        blit(arr, sprite(a, 20), 15 + 105 * ph, (140 if spec.get("first") else 105) + int(round(2 * math.sin(t * 2))))
+    elif typ == "single":
         r = 24 if spec.get("first") else 30
         cy = 140 if spec.get("first") else 105
         blit(arr, sprite(a, r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
@@ -826,7 +878,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v3 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v4 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -840,6 +892,13 @@ def preflight():
     if not os.environ.get("GEMINI_API_KEY"):
         raise Fail("【事前チェック失敗】GEMINI_API_KEY が設定されていません")
     F = step("日本語フォント", font)
+    if VISUAL_MODE == "pixel":
+        pf = get_pixel_font()
+        if pf:
+            F = pf
+            print("   OK: ドット文字フォント(DotGothic16)")
+        else:
+            print("   警告: ドット文字フォントを取得できません→通常のフォントで作成します")
     tf = WORK / "pf.txt"
     tf.write_text("事前チェック「テスト」・ー", encoding="utf-8")
     step("動画合成(字幕の描画)", lambda: run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x120", "-vf",
