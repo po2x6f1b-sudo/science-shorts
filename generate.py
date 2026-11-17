@@ -2,7 +2,7 @@
 """宇宙・科学・人体の雑学Shorts 自動生成 (Phase 1)
 台本→VOICEVOX音声→Pexels映像→字幕→BGM/効果音→MP4→サムネ→メタ情報
 """
-import os, re, sys, json, time, random, pathlib, subprocess, datetime, traceback, unicodedata
+import os, re, sys, json, time, random, math, pathlib, subprocess, datetime, traceback, unicodedata
 import requests
 
 try:  # 実行ログをリアルタイムに表示する
@@ -185,12 +185,16 @@ def write_script(topic, angle, src, feedback=""):
 - emphasis: 画面に大きく出すキーワード(8文字以内)。
 - pexels_query: Pexelsで映像を探す英語の検索語(2〜3語、具体的)。
 - nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
+- pixel: そのシーンの映像（ピクセルアート）の指定。type は次のどれか:
+  single(aの天体を1つ見せる) / orbit(aの周りをbが回る。例: a=earth,b=moon) / compare(aとbの大きさ比べ。太陽・惑星・月だけ) / travel(ロケットがaへ向かう。距離や到達の話)。
+  a と b は次の名前から選ぶ: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, rocket, satellite, comet, galaxy, asteroid, star。
+  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。内容に合う名前がなければ、a=star にする。
 - titles: クリックしたくなるタイトル3案(各30文字以内。専門用語や数字の羅列だけにせず、誰でも気になる疑問や驚きの形にする。誤字・誤変換がないか確認する)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
 {('前回の指摘(必ず修正): ' + feedback) if feedback else ''}
 JSONのみで返す:
-{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":""}}],
+{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":"","pixel":{{"type":"","a":"","b":""}}}}],
 "description":"","hashtags":["#"],"pinned_comment":"","facts":[""]}}"""
     return gemini(p)
 
@@ -331,6 +335,316 @@ def download(url, path):
 
 
 # ---------- 字幕・シーン ----------
+# ---------- ピクセルアート映像(自作・無料・著作権の心配なし) ----------
+PX_OK = False
+for _extra in (None, [], ["--break-system-packages"]):  # None=そのまま試す。無ければ自動でインストール
+    if _extra is not None:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pillow", "numpy", *_extra],
+                       capture_output=True)
+    try:
+        import numpy as np
+        from PIL import Image
+        PX_OK = True
+        break
+    except ImportError:
+        continue
+
+PX_W, PX_H, PX_FPS = 135, 240, 15
+PX_BG = (6, 8, 26)
+VISUAL_MODE = os.environ.get("VISUAL_MODE", "pixel")  # pixel=ピクセルアート / nasa=NASA素材
+PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "地球", "moon": "月", "mars": "火星",
+            "jupiter": "木星", "saturn": "土星", "uranus": "天王星", "neptune": "海王星", "black_hole": "ブラックホール",
+            "rocket": "ロケット", "satellite": "人工衛星", "comet": "彗星", "galaxy": "銀河", "asteroid": "小惑星",
+            "star": "星"}
+# 直径(km)。大きさ比べは、この表から正確な倍率を計算する
+PX_DIAM = {"sun": 1392700, "mercury": 4879, "venus": 12104, "earth": 12742, "moon": 3474, "mars": 6779,
+           "jupiter": 139820, "saturn": 116460, "uranus": 50724, "neptune": 49244}
+_PAT = {
+    "rocket": (["...WW...", "..WWWW..", ".WWBBWW.", ".WWBBWW.", ".WWWWWW.", "WWRRRRWW", "W.RRRR.W", "..R..R.."],
+               {"W": (235, 235, 240), "B": (80, 160, 255), "R": (220, 60, 60)}),
+    "satellite": (["BBB.G.BBB", "BBB.G.BBB", "BBBGGGBBB", "BBB.G.BBB", "BBB.G.BBB"],
+                  {"B": (60, 110, 200), "G": (205, 205, 210)}),
+}
+_SPR = {}
+
+
+def _snoise(size, grid, seed):
+    rng = np.random.default_rng(seed)
+    g = Image.fromarray((rng.random((grid, grid)) * 255).astype("uint8")).resize((size, size), Image.BICUBIC)
+    return np.asarray(g) / 255.0
+
+
+def _rgba(col, mask):
+    out = np.zeros(col.shape[:2] + (4,), np.uint8)
+    out[..., :3] = np.clip(col, 0, 255)
+    out[..., 3] = np.where(mask, 255, 0)
+    return Image.fromarray(out, "RGBA")
+
+
+def _planet(name, r):
+    n = 2 * r + 1
+    seed = sum(map(ord, name))
+    yy, xx = np.mgrid[0:n, 0:n]
+    dx, dy = xx - r, yy - r
+    d = np.hypot(dx, dy)
+    ns, ns2 = _snoise(n, 5, seed), _snoise(n, 9, seed + 1)
+    col = np.zeros((n, n, 3), float)
+    if name == "earth":
+        col[:] = (47, 111, 219)
+        col[(ns > 0.52) & (np.hypot(dx + 3, dy - 2) < r * 0.85)] = (70, 170, 90)
+    elif name == "moon":
+        col[:] = (190, 190, 195); col[ns2 > 0.78] = (140, 140, 148)
+    elif name == "mars":
+        col[:] = (205, 95, 55); col[ns > 0.55] = (150, 62, 38); col[dy < -r * 0.78] = (240, 240, 245)
+    elif name == "mercury":
+        col[:] = (150, 140, 130); col[ns2 > 0.75] = (110, 102, 95)
+    elif name == "venus":
+        col[:] = (232, 200, 130); col[ns > 0.55] = (210, 170, 100)
+    elif name == "uranus":
+        col[:] = (130, 212, 222); col[ns > 0.6] = (110, 190, 205)
+    elif name == "neptune":
+        col[:] = (60, 92, 222); col[ns > 0.58] = (90, 130, 240)
+    elif name in ("jupiter", "saturn"):
+        bands = (np.sin(dy / max(r, 1) * 9 + ns * 2.5) + 1) / 2
+        c1, c2 = ((226, 190, 150), (172, 120, 84)) if name == "jupiter" else ((236, 214, 160), (200, 168, 112))
+        col[:] = np.array(c1)[None, None, :] * bands[..., None] + np.array(c2)[None, None, :] * (1 - bands[..., None])
+        if name == "jupiter":
+            spot = (((dx - r * 0.3) / (r * 0.28 + 0.5)) ** 2 + ((dy - r * 0.32) / (r * 0.17 + 0.5)) ** 2) < 1
+            col[spot] = (200, 80, 60)
+    elif name == "sun":
+        col[:] = (255, 190, 40); col[ns > 0.5] = (255, 225, 90)
+    if name != "sun":
+        k = (dx + dy) / (2 * r + 1e-9)
+        col *= (1.12 - 0.40 * (k + 0.5))[..., None]
+    col[d > r - 1.2] *= 0.82
+    return _rgba(col, d <= r)
+
+
+def _ring_layer(n, r, rx, ry, c_in, c_out, front):
+    yy, xx = np.mgrid[0:n, 0:n]
+    dx, dy = xx - r, yy - r
+    e = (dx / max(rx, 1)) ** 2 + (dy / max(ry, 1)) ** 2
+    m = (e >= 0.5) & (e <= 1.0) & ((dy > 0) if front else (dy <= 0))
+    t = np.clip((e - 0.5) / 0.5, 0, 1)[..., None]
+    col = np.array(c_in)[None, None, :] * (1 - t) + np.array(c_out)[None, None, :] * t
+    return _rgba(col, m)
+
+
+def _compose(layers):
+    base = layers[0].copy()
+    for im in layers[1:]:
+        base.alpha_composite(im)
+    return base
+
+
+def _make_sprite(name, r):
+    if name in _PAT:
+        rows, pal = _PAT[name]
+        im = Image.new("RGBA", (len(rows[0]), len(rows)), (0, 0, 0, 0)); px = im.load()
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch in pal:
+                    px[x, y] = pal[ch] + (255,)
+        s = max(1, r // 5)
+        return im.resize((im.width * s, im.height * s), Image.NEAREST)
+    n = 2 * r + 1
+    if name == "saturn":
+        rb = max(2, int(r * 0.62))
+        body = _planet("saturn", rb)
+        canvas = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        back = _ring_layer(n, r, r, max(1, int(r * 0.28)), (150, 130, 100), (215, 195, 150), False)
+        front = _ring_layer(n, r, r, max(1, int(r * 0.28)), (150, 130, 100), (215, 195, 150), True)
+        canvas.alpha_composite(back)
+        canvas.alpha_composite(body, (r - rb, r - rb))
+        canvas.alpha_composite(front)
+        return canvas
+    if name == "black_hole":
+        rc = max(2, int(r * 0.5))
+        canvas = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        back = _ring_layer(n, r, r, max(1, int(r * 0.32)), (255, 235, 150), (255, 120, 30), False)
+        front = _ring_layer(n, r, r, max(1, int(r * 0.32)), (255, 235, 150), (255, 120, 30), True)
+        yy, xx = np.mgrid[0:n, 0:n]
+        d = np.hypot(xx - r, yy - r)
+        core = _rgba(np.zeros((n, n, 3)), d <= rc)
+        halo = _rgba(np.full((n, n, 3), (255, 230, 170), float), (d > rc) & (d <= rc + 1.2))
+        canvas.alpha_composite(back); canvas.alpha_composite(halo); canvas.alpha_composite(core)
+        canvas.alpha_composite(front)
+        return canvas
+    if name == "galaxy":
+        arr = np.zeros((n, n, 4), np.uint8)
+        rng = np.random.default_rng(11)
+        for arm in (0, 1):
+            for t in np.linspace(0.05, 1, 320):
+                ang = arm * math.pi + t * 3 * math.pi
+                x = int(r + t * r * math.cos(ang) + rng.integers(-1, 2))
+                y = int(r + t * r * 0.55 * math.sin(ang) + rng.integers(-1, 2))
+                if 0 <= x < n and 0 <= y < n:
+                    c = np.array((255, 235, 170)) * (1 - t) + np.array((120, 170, 255)) * t
+                    arr[y, x] = (*c.astype(int), 255)
+        yy, xx = np.mgrid[0:n, 0:n]
+        arr[(np.hypot(xx - r, (yy - r) * 1.6) < max(2, r * 0.18))] = (255, 245, 200, 255)
+        return Image.fromarray(arr, "RGBA")
+    if name == "asteroid":
+        rng = np.random.default_rng(5)
+        vals = rng.random(8)
+        yy, xx = np.mgrid[0:n, 0:n]
+        dx, dy = xx - r, yy - r
+        ang = np.mod(np.arctan2(dy, dx), 2 * np.pi)
+        rad = np.interp(ang, np.linspace(0, 2 * np.pi, 9), np.append(vals, vals[0]))
+        d = np.hypot(dx, dy)
+        col = np.zeros((n, n, 3)); col[:] = (150, 135, 120)
+        col[_snoise(n, 8, 3) > 0.7] = (110, 98, 88)
+        return _rgba(col, d <= r * (0.62 + 0.38 * rad))
+    if name == "comet":
+        m = 4 * r + 1
+        arr = np.zeros((m, m, 4), np.uint8)
+        hx, hy, L = r, 3 * r, int(3.2 * r)
+        for s in range(L):
+            w = max(0, int(r * 0.9 * (1 - s / L)))
+            a = int(255 * (1 - s / L))
+            for k in range(-w, w + 1):
+                x, y = hx + s + k, hy - s + k
+                if 0 <= x < m and 0 <= y < m:
+                    arr[y, x] = (200, 225, 255, a)
+        yy, xx = np.mgrid[0:m, 0:m]
+        arr[np.hypot(xx - hx, yy - hy) <= max(2, r * 0.6)] = (235, 245, 255, 255)
+        return Image.fromarray(arr, "RGBA")
+    if name == "star":
+        im = Image.new("RGBA", (5, 5), (0, 0, 0, 0)); px = im.load()
+        for x, y in [(2, 0), (2, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (2, 3), (2, 4)]:
+            px[x, y] = (255, 240, 150, 255)
+        return im.resize((5 * max(1, r // 5), 5 * max(1, r // 5)), Image.NEAREST)
+    return _planet(name, r)
+
+
+def sprite(name, r):
+    key = (name, r)
+    if key not in _SPR:
+        _SPR[key] = _make_sprite(name, r)
+    return _SPR[key]
+
+
+def blit(arr, spr, cx, cy):
+    a = np.asarray(spr)
+    h, w = a.shape[:2]
+    x0, y0 = int(cx - w // 2), int(cy - h // 2)
+    xs, ys = max(0, -x0), max(0, -y0)
+    xe, ye = min(w, PX_W - x0), min(h, PX_H - y0)
+    if xe <= xs or ye <= ys:
+        return
+    src = a[ys:ye, xs:xe]
+    reg = arr[y0 + ys:y0 + ye, x0 + xs:x0 + xe]
+    al = (src[..., 3:4] / 255.0)
+    reg[:] = (src[..., :3] * al + reg * (1 - al)).astype(np.uint8)
+
+
+def _stars(n=70):
+    rnd = random.Random(7)
+    return [(rnd.randrange(PX_W), rnd.randrange(PX_H), rnd.random() * 6.28) for _ in range(n)]
+
+
+def px_spec(raw, first):
+    """AIが選んだ映像の指定を検証する(おかしければ、星空だけの背景にする)"""
+    if not isinstance(raw, dict):
+        return {"type": "none"}
+    typ = str(raw.get("type", "single"))
+    a = raw.get("a") if raw.get("a") in PX_NAMES else None
+    b = raw.get("b") if raw.get("b") in PX_NAMES else None
+    if not a:
+        return {"type": "none"}
+    if first:
+        return {"type": "single", "a": a, "first": True}
+    if typ == "compare" and b and a in PX_DIAM and b in PX_DIAM and a != b:
+        return {"type": "compare", "a": a, "b": b}
+    if typ == "orbit" and b and a != b and a not in _PAT and b not in _PAT:
+        return {"type": "orbit", "a": a, "b": b}
+    if typ == "travel" and a not in _PAT:
+        return {"type": "travel", "a": a}
+    return {"type": "single", "a": a}
+
+
+def px_labels(spec):
+    """文字は、くっきり表示するため、動画合成の段階で重ねる: (文字, 中心x, y, サイズ, 色)"""
+    typ, a, b = spec["type"], spec.get("a"), spec.get("b")
+    if typ == "single" and not spec.get("first"):
+        return [(PX_NAMES[a], 540, 1110, 56, "white")]
+    if typ == "compare":
+        da, db = PX_DIAM[a], PX_DIAM[b]
+        big, small = (a, b) if da >= db else (b, a)
+        n = PX_DIAM[big] / PX_DIAM[small]
+        out = [(PX_NAMES[a], 36 * 8, 1100, 52, "white"), (PX_NAMES[b], 100 * 8, 1100, 52, "white")]
+        if n >= 1.5:
+            nt = f"{n:.1f}" if n < 10 else f"{round(n)}"
+            out.append((f"直径は{PX_NAMES[big]}が{PX_NAMES[small]}の約{nt}倍", 540, 1190, 48, "0xFFE14D"))
+        return out
+    return []
+
+
+def px_frame(spec, t, stars):
+    arr = np.empty((PX_H, PX_W, 3), np.uint8)
+    arr[:] = PX_BG
+    typ, a, b = spec["type"], spec.get("a"), spec.get("b")
+    speed = 22 if typ == "travel" else 3
+    for sx, sy, ph in stars:
+        v = 140 + int(100 * math.sin(t * 2.2 + ph))
+        arr[int(sy + t * speed) % PX_H, sx] = (v, v, min(255, v + 40))
+    if typ == "single":
+        r = 24 if spec.get("first") else 30
+        cy = 140 if spec.get("first") else 105
+        blit(arr, sprite(a, r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
+    elif typ == "orbit":
+        cx, cy, orr = 67, 112, 46
+        for deg in range(0, 360, 6):
+            x, y = int(cx + orr * math.cos(math.radians(deg))), int(cy + orr * math.sin(math.radians(deg)))
+            if 0 <= x < PX_W and 0 <= y < PX_H:
+                arr[y, x] = (70, 80, 130)
+        ra = 18
+        rb = 6
+        if a in PX_DIAM and b in PX_DIAM:
+            rb = int(min(9, max(2, round(ra * PX_DIAM[b] / PX_DIAM[a]))))
+        blit(arr, sprite(a, ra), cx, cy)
+        ang = t * 2 * math.pi / 5.0 - math.pi / 2
+        blit(arr, sprite(b, rb), cx + orr * math.cos(ang), cy + orr * math.sin(ang))
+    elif typ == "compare":
+        big = max(PX_DIAM[a], PX_DIAM[b])
+        for nm, cx in ((a, 36), (b, 100)):
+            r = max(1, int(round(28 * PX_DIAM[nm] / big)))
+            blit(arr, sprite(nm, r), cx, 112 + int(round(1.5 * math.sin(t * 1.6 + cx))))
+    elif typ == "travel":
+        blit(arr, sprite(a, 18), 67, 86)
+        prog = min(1.0, t / 5.0)
+        ry = 158 - (158 - 118) * (1 - (1 - prog) ** 2)
+        blit(arr, sprite("rocket", 15), 67, ry)
+        fl = 4 + (int(t * 12) % 2) * 3
+        y1 = int(ry) + 12
+        arr[y1:y1 + fl, 64:70] = (255, 190, 60)
+        arr[y1:y1 + max(1, fl - 2), 65:69] = (255, 245, 170)
+    return arr
+
+
+def px_render(spec, dur, path):
+    """ピクセルの動画(音なし)を作る。低解像度のまま送り、ffmpegで8倍に拡大してドットをくっきり保つ"""
+    stars = _stars()
+    n = int(math.ceil(dur * PX_FPS)) + 1
+    logf = open(str(path) + ".log", "w")
+    p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                          "-s", f"{PX_W}x{PX_H}", "-r", str(PX_FPS), "-i", "-",
+                          "-vf", "scale=1080:1920:flags=neighbor,fps=30,format=yuv420p",
+                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", str(path)],
+                         stdin=subprocess.PIPE, stderr=logf)
+    try:
+        for k in range(n):
+            p.stdin.write(px_frame(spec, k / PX_FPS, stars).tobytes())
+        p.stdin.close()
+    except BrokenPipeError:
+        pass
+    p.wait()
+    logf.close()
+    if p.returncode != 0:
+        raise Fail("ピクセル映像の作成に失敗: " + pathlib.Path(str(path) + ".log").read_text()[-500:])
+    return px_labels(spec) if spec["type"] != "none" else []
+
+
 def wrap(s, n):
     return "\n".join(s[i:i + n] for i in range(0, len(s), n))
 
@@ -389,7 +703,7 @@ def probe(path):
     st = j["streams"][0]
     return int(st["width"]), int(st["height"]), float(j.get("format", {}).get("duration") or 0)
 
-def render_scene(i, sc, bg, wav, dur, F):
+def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None):
     total = dur + 0.15
     elines = split_lines(sc["emphasis"], 7 if i == 0 else 8)
     efs = []
@@ -413,12 +727,14 @@ def render_scene(i, sc, bg, wav, dur, F):
     is_img = bool(bg) and str(bg).lower().endswith((".jpg", ".jpeg", ".png"))
     ss = []
     land = False
-    if bg:
+    if bg and not pixel:
         w0, h0, d0 = probe(bg)
         land = w0 > h0
         if not is_img and d0 > total + 8:
             ss = ["-ss", f"{random.uniform(3, d0 - total - 1):.2f}"]
-    if land:
+    if pixel:
+        base = "[0:v]setsar=1,fps=30,"
+    elif land:
         fgw = "scale=w='trunc(1080*(1+0.012*t)/2)*2':h=-2:eval=frame" if is_img else "scale=1080:-2"
         base = ("[0:v]split=2[a][b];[a]scale=1242:2208:force_original_aspect_ratio=increase,"
                 "crop=1080:1920,boxblur=30:5,eq=brightness=-0.18[bg];"
@@ -427,7 +743,7 @@ def render_scene(i, sc, bg, wav, dur, F):
         base = ("[0:v]scale=1242:2208:force_original_aspect_ratio=increase,"
                 "crop=1080:1920:x='(iw-1080)/2+sin(t*0.8)*40':y='(ih-1920)/2+cos(t*0.6)*40',"
                 "fps=30,setsar=1,")
-    vf = base + "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill"
+    vf = base + f"drawbox=x=0:y=0:w=iw:h=ih:color=black@{0.08 if pixel else 0.28}:t=fill"
     if i == 0:
         y0 = 430
         for k, ef in enumerate(efs):
@@ -441,6 +757,11 @@ def render_scene(i, sc, bg, wav, dur, F):
         for k, ef in enumerate(efs):
             vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
                    f"bordercolor=black:x=(w-text_w)/2:y={260 + k * 124}:alpha='min(1,t/0.25)'")
+    for li, (ltxt, lcx, ly, lsz, lcol) in enumerate(labels or []):
+        lf = WORK / f"s{i}_l{li}.txt"
+        lf.write_text(ltxt, encoding="utf-8")
+        vf += (f",drawtext=fontfile={F}:textfile='{lf}':fontsize={lsz}:fontcolor={lcol}:borderw=5:"
+               f"bordercolor=black:x={lcx}-text_w/2:y={ly}")
     if subs:
         vf += f",drawbox=x=0:y=1330:w=iw:h=250:color=black@0.55:t=fill:enable='between(t,0.05,{subs[-1][2] + 0.1:.2f})'"
     for fl, a, b in subs:
@@ -451,6 +772,8 @@ def render_scene(i, sc, bg, wav, dur, F):
     vf += ",format=yuv420p[v]"
     if not bg:
         inp = ["-f", "lavfi", "-i", "gradients=s=1080x1920:c0=0x02030a:c1=0x0a3550:x0=0:y0=0:x1=1080:y1=1920:speed=0.02"]
+    elif pixel:
+        inp = ["-i", str(bg)]
     elif is_img:
         inp = ["-loop", "1", "-framerate", "30", "-i", str(bg)]
     elif ss:
@@ -524,6 +847,12 @@ def preflight():
         sp, _ = pick_speaker()
         return tts("事前チェックです。", sp, WORK / "pf.wav")
     step("VOICEVOX(音声合成)", vv)
+    if VISUAL_MODE == "pixel":
+        if PX_OK:
+            step("ピクセルアート描画", lambda: [px_frame({"type": t, "a": "earth", "b": "moon"}, 0.5, _stars())
+                                            for t in ("single", "orbit", "compare", "travel")])
+        else:
+            print("   警告: ピクセル描画の部品(Pillow/numpy)が使えません→NASA素材で作成します")
     try:
         r = requests.get("https://images-api.nasa.gov/search", headers=UA, timeout=30,
                          params={"q": "nebula", "media_type": "image", "page_size": 1})
@@ -582,9 +911,17 @@ def main():
     print("4) ナレーション生成")
     speaker, vname = pick_speaker()
     items, used, used_nasa, credits = [], set(), set(), []
+    px_labels_map = {}
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
+        if VISUAL_MODE == "pixel" and PX_OK:
+            spec = px_spec(sc.get("pixel"), i == 0)
+            pxp = WORK / f"px{i}.mp4"
+            px_labels_map[i] = px_render(spec, dur + 0.5, pxp)
+            print(f"   シーン{i}: ピクセルアート {spec}")
+            items.append((sc, pxp, wav, dur))
+            continue
         bg = None
         p = pexels(sc["pexels_query"], used)
         if p:
@@ -616,7 +953,7 @@ def main():
     print("5) シーン合成")
     files, starts, t0 = [], [], 0.0
     for i, (sc, bg, wav, dur) in enumerate(items):
-        f, total = render_scene(i, sc, bg, wav, dur, F)
+        f, total = render_scene(i, sc, bg, wav, dur, F, pixel=(i in px_labels_map), labels=px_labels_map.get(i))
         files.append(f); starts.append(t0); t0 += total
     print("6) 全体合成"); assemble(files, starts, t0)
     print("7) サムネイル"); thumbnail(script["titles"][0], F)
@@ -625,13 +962,15 @@ def main():
     md = [f"# {script['titles'][0]}", "", "## タイトル案"] + [f"- {x}" for x in script["titles"]]
     md += ["", "## 概要欄（コピーして使用）", script["description"], "",
            "出典: " + src["title"] + " (Wikipedia) " + src["url"],
-           "音声: " + credit_voice, "映像・画像: NASA Image and Video Library（NASAが本動画を承認・推薦するものではありません） / BGM・効果音: 自動生成のオリジナル音",
+           "音声: " + credit_voice, ("映像: プログラムで描いたピクセルアート（イメージ図です。実際の見た目とは異なります） / BGM・効果音: 自動生成のオリジナル音"
+            if px_labels_map else "映像・画像: NASA Image and Video Library（NASAが本動画を承認・推薦するものではありません） / BGM・効果音: 自動生成のオリジナル音"),
            "※ナレーションはAI音声を使用しています。", "", " ".join(script["hashtags"]), "",
            "## 固定コメント案", script["pinned_comment"], "",
            "## 事実確認メモ（投稿前に目視確認してください）"] + [f"- {x}" for x in script.get("facts", [])]
     if script.get("check_notes"):
         md += ["", "## 要確認（自動チェックで指摘が残った点。投稿前に必ず確認）", script["check_notes"]]
-    md += ["", "## 映像クレジット（投稿前に、NASAロゴ・人物・他社の表記が映っていないか目視確認）"] + [f"- {c}" for c in credits]
+    if credits:
+        md += ["", "## 映像クレジット（投稿前に、NASAロゴ・人物・他社の表記が映っていないか目視確認）"] + [f"- {c}" for c in credits]
     md += ["", "## サムネイルのヒント",
            "YouTubeの投稿画面でサムネイル(フレーム)を選ぶとき、動画の最初(0〜3秒)を選ぶと、大きな文字の問いかけ画面になります。"]
     md += ["", f"長さ(ナレーション): {voice_total:.1f}秒 / 合成後: {t0:.1f}秒"]
