@@ -100,20 +100,20 @@ def gemini(prompt):
 # ---------- 1. テーマ ----------
 def pick_topic(history):
     used = [h["topic"] for h in history][-200:]
-    p = f"""あなたは「宇宙の意外な雑学」YouTubeショート動画の企画者です。
-テーマは、宇宙・天体・太陽系・地球と宇宙の関わり・探査機・望遠鏡など、NASAの画像や映像で表現できる題材に限ります。
-人物（宇宙飛行士など）が主役の話題は避けてください。
+    p = f"""あなたは「科学の意外な雑学」YouTubeショート動画の企画者です。
+テーマは、科学全般（宇宙・地球・天気・人体・生き物・食べ物・化学・物理・身の回りの現象）から選びます。
+人物（研究者や有名人）が主役の話題は避けてください。直近のテーマとは、できるだけ別の分野にしてください。
 
-【身近さ（最重要）】日本人の誰もが名前を知っている対象（月・太陽・地球・火星・ブラックホール・流れ星・天の川・国際宇宙ステーションなど）か、
-日常の物や感覚（バナナ、1円玉、東京〜大阪の距離、1日の長さなど）と結びつけられる題材にする。
-マニアックな天体名・型番・専門用語・研究者名が主役の題材は避ける。
+【身近さ（最重要）】日本人の誰もが知っている対象（月・太陽・水・氷・雷・虹・火・雲・心臓・脳・睡眠・歯・バナナ・卵・塩・DNAなど）か、
+日常の物や感覚と結びつけられる題材にする。
+マニアックな名前・型番・専門用語・研究者名が主役の題材は避ける。
 その身近な対象について、日本人の多くが「知らなかった！」と驚く意外な事実を選ぶこと。
-教科書や雑学本の定番（宇宙は広い、月は少しずつ遠ざかる、太陽は恒星、など）は避ける。
+教科書や雑学本の定番は避ける。
 常識の逆を行く事実、桁外れの数字、身近なものに例えると驚く比較（バナナの放射線のような話）が理想。
 
 - topic: 動画テーマ(日本語、驚きが伝わる言い方)
 - angle: 動画で伝える一番意外な事実を1文で
-- wiki_query: Wikipedia日本語に実在する、天体・探査機・現象などの一般的な記事名(例:「かに星雲」「ボイジャー1号」)。人名は不可。
+- wiki_query: Wikipedia日本語に実在する、物・現象・生き物・身体・天体の一般的な記事名(例:「心臓」「雷」「バナナ」「ブラックホール」)。人名は不可。
 すでに使ったテーマ（重複・類似は禁止）: {json.dumps(used, ensure_ascii=False)}
 JSONのみ: {{"topic":"","angle":"","wiki_query":""}}"""
     t = gemini(p)
@@ -125,7 +125,9 @@ JSONのみ: {{"topic":"","angle":"","wiki_query":""}}"""
 
 
 # ---------- 2. 調査 ----------
-SPACE_WORDS = re.compile(r"宇宙|天体|惑星|恒星|銀河|太陽|月面|衛星|探査|望遠鏡|軌道|星雲|彗星|小惑星|ブラックホール|NASA|光年|天文")
+SPACE_WORDS = re.compile(r"科学|研究|物質|細胞|分子|原子|元素|化学|反応|物理|生物|動物|植物|遺伝子|人体|筋肉|血液|臓器|神経|酸素|水素|"
+                         r"エネルギー|温度|気圧|気象|大気|電気|電子|重力|波長|宇宙|天体|惑星|恒星|地球|太陽|観測|実験|発見|理論|現象|成分|"
+                         r"結晶|圧力|熱|運動|生態|進化|栄養|ビタミン|タンパク質|ホルモン|ウイルス|細菌|火山|地震|気候|海洋|鉱物|岩石|光|音")
 
 
 def wiki(query):
@@ -142,7 +144,7 @@ def wiki(query):
         if len(text) < 200:
             continue
         if len(SPACE_WORDS.findall(text[:4000])) < 6:
-            print(f"   除外(宇宙と無関係な記事): {title}")
+            print(f"   除外(科学と無関係な記事): {title}")
             continue
         return {"title": title, "url": "https://ja.wikipedia.org/wiki/" + requests.utils.quote(title), "text": text}
     return None
@@ -186,16 +188,21 @@ def write_script(topic, angle, src, feedback=""):
 - pexels_query: Pexelsで映像を探す英語の検索語(2〜3語、具体的)。
 - nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
 - pixel: そのシーンの映像（ピクセルアート）の指定。type は次のどれか:
-  single(aの天体を1つ見せる) / orbit(aの周りをbが回る。例: a=earth,b=moon) / compare(aとbの大きさ比べ。太陽・惑星・月だけ) / travel(ロケットがaへ向かう。距離や到達の話)。
-  a と b は次の名前から選ぶ: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, rocket, satellite, comet, galaxy, asteroid, meteor。
-  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。内容に合う名前がなければ、a を空にする（星空だけの背景になる）。無理に当てはめない。
-  流れ星・隕石の話は a=meteor、彗星は a=comet、ロケットの打ち上げは a=rocket を使う。
+  single(aの絵を1つ見せる) / pair(aとbを並べる。op=arrow: aがbになる・向かう、plus: aとbの組み合わせ、vs: aとbの比較) /
+  orbit(aの周りをbが回る。天体のみ) / compare(aとbの大きさ比べ。太陽・惑星・月のみ) / travel(ロケットがaへ向かう。天体のみ)。
+  a と b は次の名前から選ぶ:
+    宇宙: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, galaxy, asteroid, comet, meteor, rocket, satellite
+    人体・生物: heart(心臓・血), brain(脳), eye(目), tooth(歯), bone(骨), dna(DNA・遺伝), cell(細胞), virus(ウイルス・細菌), fish(魚), tree(木), flower(花)
+    自然・物理・化学: drop(水), flame(火), bolt(電気・雷), snowflake(氷・雪), cloud(雲・雨・天気), volcano(火山), atom(原子・分子), magnet(磁石), bulb(電球・ひらめき), flask(実験・化学), thermometer(温度・熱)
+    食べ物: banana, apple, egg
+  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。
+  原因と結果、変化（例: 水が氷になる）は pair の arrow を使うと分かりやすい。内容に合う名前がなければ a を空にする。
 - titles: クリックしたくなるタイトル3案(各30文字以内。専門用語や数字の羅列だけにせず、誰でも気になる疑問や驚きの形にする。誤字・誤変換がないか確認する)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
 {('前回の指摘(必ず修正): ' + feedback) if feedback else ''}
 JSONのみで返す:
-{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":"","pixel":{{"type":"","a":"","b":""}}}}],
+{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":"","pixel":{{"type":"","a":"","b":"","op":""}}}}],
 "description":"","hashtags":["#"],"pinned_comment":"","facts":[""]}}"""
     return gemini(p)
 
@@ -352,11 +359,20 @@ for _extra in (None, [], ["--break-system-packages"]):  # None=そのまま試�
 
 PX_W, PX_H, PX_FPS = 135, 240, 15
 PX_BG = (6, 8, 26)
+_LAB_GRAD = np.linspace((12, 22, 42), (26, 44, 72), 240).astype(np.uint8)[:, None, :] if PX_OK else None
 VISUAL_MODE = os.environ.get("VISUAL_MODE", "pixel")  # pixel=ピクセルアート / nasa=NASA素材
 PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "地球", "moon": "月", "mars": "火星",
             "jupiter": "木星", "saturn": "土星", "uranus": "天王星", "neptune": "海王星", "black_hole": "ブラックホール",
             "rocket": "ロケット", "satellite": "人工衛星", "comet": "彗星", "galaxy": "銀河", "asteroid": "小惑星",
-            "meteor": "流れ星"}
+            "meteor": "流れ星",
+            "heart": "心臓", "brain": "脳", "eye": "目", "tooth": "歯", "bone": "骨", "dna": "DNA", "cell": "細胞",
+            "virus": "ウイルス", "fish": "魚", "tree": "木", "flower": "花",
+            "drop": "水", "flame": "火", "bolt": "電気", "snowflake": "氷", "cloud": "雲", "volcano": "火山",
+            "atom": "原子", "magnet": "磁石", "bulb": "電球", "flask": "実験", "thermometer": "温度",
+            "banana": "バナナ", "apple": "りんご", "egg": "卵"}
+SPACE_BODIES = {"sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune",
+                "black_hole", "galaxy", "asteroid", "comet"}
+SPACE_SET = SPACE_BODIES | {"meteor", "rocket", "satellite"}
 # 直径(km)。大きさ比べは、この表から正確な倍率を計算する
 PX_DIAM = {"sun": 1392700, "mercury": 4879, "venus": 12104, "earth": 12742, "moon": 3474, "mars": 6779,
            "jupiter": 139820, "saturn": 116460, "uranus": 50724, "neptune": 49244}
@@ -366,6 +382,62 @@ _PAT = {
     "satellite": (["BBB.G.BBB", "BBB.G.BBB", "BBBGGGBBB", "BBB.G.BBB", "BBB.G.BBB"],
                   {"B": (60, 110, 200), "G": (205, 205, 210)}),
 }
+_PAT.update({
+    "heart": (["..RRR...RRR..", ".RRRRR.RRRRR.", "RRRWWRRRRRRRR", "RRWRRRRRRRRRR", "RRRRRRRRRRRRR", ".RRRRRRRRRRR.",
+               "..RRRRRRRRR..", "...RRRRRRR...", "....RRRRR....", ".....RRR.....", "......R......"],
+              {"R": (225, 50, 70), "W": (255, 175, 185)}),
+    "brain": (["...PPPPPPPP...", "..PPpPPPPpPP..", ".PPPPpPPPPPPP.", "PPpPPPPPpPPPPP", "PPPPpPPPPPpPPP",
+               "PPPpPPPPPPPPPP", ".PPPPPpPPPPPP.", "..PPPPPPPPPP..", "....PpPPpP....", ".....PPPP....."],
+              {"P": (240, 150, 170), "p": (200, 100, 125)}),
+    "eye": (["....BBBBBB....", "..BWWWWWWWWB..", ".BWWWIIIIWWWB.", "BWWWIIKKIIWWWB", "BWWWIIKKIIWWWB",
+             ".BWWWIIIIWWWB.", "..BWWWWWWWWB..", "....BBBBBB...."],
+            {"B": (40, 40, 55), "W": (240, 240, 245), "I": (70, 140, 220), "K": (10, 10, 20)}),
+    "tooth": ([".WWW..WWW.", "WWWWWWWWWW", "WWWWWWWWWW", "WWWWWWWWWW", "WWWWWWWWWW", ".WWWWWWWW.", ".WWWWWWWW.",
+               ".WWW..WWW.", ".WWW..WWW.", ".WW....WW.", ".WG....GW.", "..G....G.."],
+              {"W": (245, 245, 250), "G": (190, 190, 205)}),
+    "bone": (["WW..........WW", "WWW........WWW", ".WWWWWWWWWWWW.", ".WWWWWWWWWWWW.", ".WWWWWWWWWWWW.",
+              "WWW........WWW", "WW..........WW"], {"W": (236, 230, 214)}),
+    "drop": (["....B....", "...BBB...", "...BBB...", "..BBBBB..", ".BBBBBBB.", ".BWBBBBB.", "BBWBBBBBB", "BBBBBBBBB",
+              "BBBBBBBBB", ".BBBBBBB.", "..BBBBB.."], {"B": (70, 150, 235), "W": (200, 230, 255)}),
+    "bolt": ([".....YYYY", "....YYYY.", "...YYYY..", "..YYYY...", ".YYYYYYY.", ".....YYY.", "....YYY..", "...YYY...",
+              "..YYY....", "..YY.....", ".Y......."], {"Y": (255, 225, 60)}),
+    "snowflake": ([".....S.....", ".S...S...S.", "..S..S..S..", "...S.S.S...", "....SSS....", "SSSSSSSSSSS", "....SSS....",
+                   "...S.S.S...", "..S..S..S..", ".S...S...S.", ".....S....."], {"S": (190, 235, 255)}),
+    "cloud": (["......CCCC......", "....CCCCCCCC....", "..CCCCCCCCCCC...", ".CCCCCCCCCCCCCC.", "CCCCCCCCCCCCCCCC",
+               "CCCCCCCCCCCCCCCC", "CCCCCCCCCCCCCCCC", ".CCCCCCCCCCCCCC.", "..SSSSSSSSSSSS.."],
+              {"C": (236, 241, 250), "S": (196, 208, 226)}),
+    "volcano": (["......OOOO......", ".....ORRRRO.....", ".....RRYYRR.....", "....BBBBBBBB....", "...BBBBBBBBBB...",
+                 "..BBBBRBBBBBBB..", ".BBBBBBBRBBBBBB.", "BBBBBBBBBBBBBBBB"],
+                {"O": (255, 150, 40), "R": (225, 60, 40), "Y": (255, 225, 90), "B": (120, 85, 62)}),
+    "tree": (["....GGG....", "..GGGGGGG..", ".GGGgGGGGG.", "GGGGGGGgGGG", "GGgGGGGGGGG", ".GGGGGGGGG.", "..GGGgGGG..",
+              "....TTT....", "....TTT....", "....TTT...."],
+             {"G": (60, 170, 80), "g": (40, 130, 60), "T": (130, 90, 50)}),
+    "flower": (["...PPP...", ".PPPPPPP.", "PPPPYPPPP", "PPPYYYPPP", "PPPPYPPPP", ".PPPPPPP.", "...PPP...", "....L....",
+                "..LL.L...", "...LLL...", "....L....", "....L....", "....L...."],
+               {"P": (255, 120, 160), "Y": (255, 220, 70), "L": (70, 170, 70)}),
+    "fish": ([".....OOOO.....", "..OOOOOOOOO..O", ".OOKOOOOOOOOOO", "OOOOOOOOOOOOOO", ".OOOOOOOOOOOOO", "..OOOOOOOOO..O",
+              ".....OOOO....."], {"O": (255, 150, 50), "K": (20, 20, 30)}),
+    "magnet": (["WWWW..WWWW", "RRRR..BBBB", "RRRR..BBBB", "RRRR..BBBB", "RRRR..BBBB", "RRRRRRBBBB", ".RRRRBBBB.",
+                "..RRRBBB.."], {"R": (215, 50, 50), "B": (60, 100, 215), "W": (230, 230, 235)}),
+    "bulb": (["...YYYYY...", "..YYYYYYY..", ".YYYWYYYYY.", ".YYWYYYYYY.", ".YYYYYYYYY.", ".YYYYYYYYY.", "..YYYYYYY..",
+              "...YYYYY...", "....GGG....", "....GGG....", "....GGG....", "....kkk....", ".....k....."],
+             {"Y": (255, 230, 90), "W": (255, 250, 200), "G": (170, 170, 180), "k": (90, 90, 100)}),
+    "flask": (["...WWWWW...", "....W.W....", "....W.W....", "....WLW....", "...WLLLW...", "..WLLLLLW..", ".WLLLLLLLW.",
+               "WLLLLLLLLLW", "WLLLLLLLLLW", "WWWWWWWWWWW"], {"W": (210, 225, 240), "L": (90, 220, 150)}),
+    "banana": (["BB..........DD", "YYY........YYY", ".YYY......YYY.", ".YYYY....YYYY.", "..YYYYYYYYYY..",
+                "...YYYYYYYY...", "....YYYYYY...."], {"Y": (255, 225, 70), "B": (120, 85, 40), "D": (80, 60, 30)}),
+    "apple": (["....T......", "....TLL....", "..RRRTRRR..", ".RRRRRRRRR.", "RRWRRRRRRRR", "RWRRRRRRRRR", "RRRRRRRRRRR",
+               "RRRRRRRRRRR", ".RRRRRRRRR.", "..RRRRRRR..", "...RR.RR..."],
+              {"R": (220, 50, 50), "W": (255, 170, 170), "T": (110, 75, 40), "L": (80, 180, 70)}),
+    "egg": (["...EEE...", "..EEEEE..", ".EEEEEEE.", ".EEEEEEE.", "EEEEEEEEE", "EEEEEEEEE", "EEEEEEEEE", "EEEEEEEEE",
+             ".EEEEEEE.", "..EEEEE..", "...SSS..."], {"E": (250, 240, 220), "S": (215, 200, 170)}),
+    "thermometer": (["..WWW..", "..WRW..", "..WRW..", "..WRW..", "..WRW..", "..WRW..", "..WRW..", ".WWRWW.", "WWRRRWW",
+                     "WRRRRRW", "WRRRRRW", "WWRRRWW", ".WWWWW."], {"W": (225, 230, 240), "R": (235, 50, 50)}),
+    "op_arrow": ([".......Y....", "........Y...", "YYYYYYYYYY..", "........Y...", ".......Y...."], {"Y": (255, 225, 77)}),
+    "op_plus": (["..Y..", "..Y..", "YYYYY", "..Y..", "..Y.."], {"Y": (255, 225, 77)}),
+})
+for _k, (_rows, _pal) in _PAT.items():
+    assert len({len(x) for x in _rows}) == 1, f"パターンの幅がそろっていません: {_k}"
 _SPR = {}
 
 
@@ -438,7 +510,121 @@ def _compose(layers):
     return base
 
 
+def _flame_sprite(r, k):
+    n = 2 * r + 1
+    arr = np.zeros((n, n, 4), np.uint8)
+    for y in range(n):
+        u = y / (n - 1)
+        prof = math.sin(math.pi * (0.12 + 0.8 * u)) ** 0.7
+        width = r * 0.95 * prof * (0.35 + 0.65 * u)
+        sway = math.sin(u * 5 + k * 2.1) * (1 - u) * r * 0.35
+        for x in range(n):
+            dx = x - r - sway
+            if abs(dx) <= width:
+                q = abs(dx) / max(width, 1e-6)
+                c = (255, 238, 140) if (q < 0.4 and u > 0.4) else ((255, 150, 40) if q < 0.75 else (225, 60, 30))
+                arr[y, x] = (*c, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _atom_sprite(r, ph):
+    n = 2 * r + 1
+    arr = np.zeros((n, n, 4), np.uint8)
+    for k, th in enumerate((0, math.pi / 3, 2 * math.pi / 3)):
+        c, s_ = math.cos(th), math.sin(th)
+        for u in np.linspace(0, 2 * math.pi, 200):
+            x, y = r * 0.95 * math.cos(u), r * 0.36 * math.sin(u)
+            px, py = int(round(r + x * c - y * s_)), int(round(r + x * s_ + y * c))
+            if 0 <= px < n and 0 <= py < n:
+                arr[py, px] = (110, 160, 255, 255)
+        ue = ph * 2 * math.pi / 16 + k * 2.1
+        x, y = r * 0.95 * math.cos(ue), r * 0.36 * math.sin(ue)
+        ex, ey = int(round(r + x * c - y * s_)), int(round(r + x * s_ + y * c))
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if 0 <= ex + dx < n and 0 <= ey + dy < n:
+                    arr[ey + dy, ex + dx] = (255, 240, 120, 255)
+    cols = [(235, 70, 70), (80, 130, 235), (235, 70, 70), (80, 130, 235), (235, 70, 70),
+            (80, 130, 235), (235, 70, 70), (80, 130, 235), (235, 70, 70)]
+    for i, (dy, dx) in enumerate([(a_, b_) for a_ in (-1, 0, 1) for b_ in (-1, 0, 1)]):
+        arr[r + dy, r + dx] = (*cols[i], 255)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _dna_sprite(r, ph):
+    n = 2 * r + 1
+    arr = np.zeros((n, n, 4), np.uint8)
+    amp = r * 0.62
+    pts = []
+    for y in range(n):
+        ang = y * 0.2 + ph * 0.4
+        x1, x2 = r + amp * math.sin(ang), r - amp * math.sin(ang)
+        if y % 4 == 0:
+            for x in range(int(min(x1, x2)), int(max(x1, x2)) + 1):
+                arr[y, x] = (225, 225, 240, 255)
+        pts.append((y, x1, x2, math.cos(ang)))
+    for front in (False, True):
+        for y, x1, x2, z in pts:
+            for x, col, depth in ((x1, (90, 160, 255), z), (x2, (255, 150, 70), -z)):
+                if (depth >= 0) == front:
+                    for dx in (-1, 0, 1):
+                        px = int(round(x)) + dx
+                        if 0 <= px < n:
+                            arr[y, px] = (*col, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _cell_sprite(r):
+    n = 2 * r + 1
+    yy, xx = np.mgrid[0:n, 0:n]
+    dx, dy = xx - r, yy - r
+    d = np.hypot(dx, dy)
+    col = np.zeros((n, n, 3)); col[:] = (175, 230, 195)
+    col[d > r - 2] = (60, 150, 105)
+    col[np.hypot(dx + 0.15 * r, dy + 0.1 * r) <= max(2, 0.35 * r)] = (240, 170, 70)
+    col[np.hypot(dx + 0.2 * r, dy + 0.15 * r) <= max(1, 0.12 * r)] = (200, 110, 40)
+    for i, (ox, oy) in enumerate([(0.5, 0.3), (-0.5, 0.4), (0.3, -0.5), (-0.45, -0.45), (0.55, -0.1), (0.0, 0.62)]):
+        col[np.hypot(dx - ox * r, dy - oy * r) <= max(1, 0.1 * r)] = (255, 150, 170) if i % 2 else (120, 170, 240)
+    return _rgba(col, d <= r)
+
+
+def _virus_sprite(r):
+    n = 2 * r + 1
+    arr = np.zeros((n, n, 4), np.uint8)
+    yy, xx = np.mgrid[0:n, 0:n]
+    d = np.hypot(xx - r, yy - r)
+    rb = 0.6 * r
+    arr[d <= rb] = (110, 200, 90, 255)
+    arr[(d > rb - 1.5) & (d <= rb)] = (70, 150, 60, 255)
+    for k in range(12):
+        ang = k * 2 * math.pi / 12
+        for t_ in np.linspace(rb, 0.88 * r, 12):
+            x, y = int(round(r + t_ * math.cos(ang))), int(round(r + t_ * math.sin(ang)))
+            if 0 <= x < n and 0 <= y < n:
+                arr[y, x] = (80, 150, 70, 255)
+        ex, ey = r + 0.9 * r * math.cos(ang), r + 0.9 * r * math.sin(ang)
+        rr = max(1, int(round(0.1 * r)))
+        for dy in range(-rr, rr + 1):
+            for dx in range(-rr, rr + 1):
+                x, y = int(round(ex)) + dx, int(round(ey)) + dy
+                if 0 <= x < n and 0 <= y < n and dx * dx + dy * dy <= rr * rr + 1:
+                    arr[y, x] = (235, 70, 70, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
 def _make_sprite(name, r):
+    mm = re.match(r"([a-z_]+?)(\d*)$", name)
+    name, ph = (mm.group(1), int(mm.group(2) or 0)) if mm else (name, 0)
+    if name == "flame":
+        return _flame_sprite(r, ph)
+    if name == "atom":
+        return _atom_sprite(r, ph)
+    if name == "dna":
+        return _dna_sprite(r, ph)
+    if name == "cell":
+        return _cell_sprite(r)
+    if name == "virus":
+        return _virus_sprite(r)
     if name in _PAT:
         rows, pal = _PAT[name]
         im = Image.new("RGBA", (len(rows[0]), len(rows)), (0, 0, 0, 0)); px = im.load()
@@ -446,7 +632,7 @@ def _make_sprite(name, r):
             for x, ch in enumerate(row):
                 if ch in pal:
                     px[x, y] = pal[ch] + (255,)
-        s = max(1, r // 5)
+        s = max(1, (2 * r) // max(im.width, im.height))
         return im.resize((im.width * s, im.height * s), Image.NEAREST)
     n = 2 * r + 1
     if name == "saturn":
@@ -580,7 +766,7 @@ def _stars(n=70):
 
 
 def px_spec(raw, first):
-    """AIが選んだ映像の指定を検証する(おかしければ、星空だけの背景にする)"""
+    """AIが選んだ映像の指定を検証する(おかしければ none にして、あとで言葉から絵を探す)"""
     if not isinstance(raw, dict):
         return {"type": "none"}
     typ = str(raw.get("type", "single"))
@@ -592,11 +778,41 @@ def px_spec(raw, first):
         return {"type": "single", "a": a, "first": True}
     if typ == "compare" and b and a in PX_DIAM and b in PX_DIAM and a != b:
         return {"type": "compare", "a": a, "b": b}
-    if typ == "orbit" and b and a != b and a not in _PAT and b not in _PAT:
+    if typ == "orbit" and b and a != b and a in SPACE_BODIES and b in SPACE_BODIES:
         return {"type": "orbit", "a": a, "b": b}
-    if typ == "travel" and a not in _PAT:
+    if typ == "travel" and a in SPACE_BODIES:
         return {"type": "travel", "a": a}
+    if typ == "pair" and b and a != b:
+        op = raw.get("op") if raw.get("op") in ("arrow", "plus", "vs") else "arrow"
+        return {"type": "pair", "a": a, "b": b, "op": op}
     return {"type": "single", "a": a}
+
+
+_PX_KEYS = [
+    (r"ブラックホール", "black_hole"), (r"流れ星|流星|隕石", "meteor"), (r"彗星", "comet"), (r"小惑星", "asteroid"),
+    (r"天の川|銀河|星雲", "galaxy"), (r"人工衛星", "satellite"), (r"ロケット", "rocket"),
+    (r"太陽(?!系)", "sun"), (r"地球", "earth"), (r"火星", "mars"), (r"木星", "jupiter"), (r"土星", "saturn"),
+    (r"金星", "venus"), (r"水星", "mercury"), (r"天王星", "uranus"), (r"海王星", "neptune"),
+    (r"(?<![0-9０-９ヶかカ一二三四五六七八九十毎今来先翌])月(?![曜間末初日刊額給収])", "moon"),
+    (r"心臓|血液|血管|脈拍", "heart"), (r"脳|神経", "brain"), (r"眼|視力|瞳|目玉|目[がをはにで]", "eye"),
+    (r"歯", "tooth"), (r"骨", "bone"), (r"DNA|遺伝子|ゲノム", "dna"), (r"細胞", "cell"),
+    (r"ウイルス|細菌", "virus"), (r"魚|海の生き物", "fish"), (r"(?<![0-9０-９])木(?![星曜])|樹木|森", "tree"),
+    (r"花|植物", "flower"), (r"火山|噴火|マグマ", "volcano"), (r"炎|火(?![星山])", "flame"),
+    (r"雷|稲妻|電気|電流|静電気", "bolt"), (r"雪|氷|凍", "snowflake"), (r"雲|雨|天気", "cloud"),
+    (r"水滴|水(?![星素曜平準])", "drop"), (r"原子|分子|電子", "atom"), (r"磁石|磁場|磁力", "magnet"),
+    (r"電球", "bulb"), (r"実験|化学|薬品|試薬", "flask"), (r"温度|体温|熱|気温", "thermometer"),
+    (r"バナナ", "banana"), (r"りんご|リンゴ|林檎", "apple"), (r"卵|たまご", "egg"),
+]
+
+
+def px_guess(text):
+    """台詞・強調文字の言葉から、描く天体を推測する(AIの指定が空のときの保険)。一番先に出てくる言葉を採用"""
+    best = None
+    for pat, name in _PX_KEYS:
+        m = re.search(pat, text or "")
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), name)
+    return best[1] if best else None
 
 
 def px_labels(spec):
@@ -604,6 +820,11 @@ def px_labels(spec):
     typ, a, b = spec["type"], spec.get("a"), spec.get("b")
     if typ == "single" and not spec.get("first"):
         return [(PX_NAMES[a], 540, 1110, 56, "white")]
+    if typ == "pair":
+        out = [(PX_NAMES[a], 34 * 8, 1090, 52, "white"), (PX_NAMES[b], 100 * 8, 1090, 52, "white")]
+        if spec.get("op") == "vs":
+            out.append(("VS", 540, 850, 84, "0xFFE14D"))
+        return out
     if typ == "compare":
         da, db = PX_DIAM[a], PX_DIAM[b]
         big, small = (a, b) if da >= db else (b, a)
@@ -616,14 +837,36 @@ def px_labels(spec):
     return []
 
 
+def anim_name(a, t):
+    if a == "dna":
+        return f"dna{int(t * 8) % 16}"
+    if a == "atom":
+        return f"atom{int(t * 8) % 16}"
+    if a == "flame":
+        return f"flame{int(t * 10) % 3}"
+    return a
+
+
+def _bg(arr, t, stars, space, speed):
+    if space:
+        arr[:] = PX_BG
+        for sx, sy, ph in stars:
+            v = 140 + int(100 * math.sin(t * 2.2 + ph))
+            arr[int(sy + t * speed) % PX_H, sx] = (v, v, min(255, v + 40))
+    else:  # 宇宙以外: 紺色のグラデーションに、ゆっくり上る小さな粒
+        arr[:] = _LAB_GRAD
+        for sx, sy, ph in stars:
+            v = 36 + int(20 * math.sin(t * 1.5 + ph))
+            arr[int(sy - t * 6) % PX_H, sx] = (v, v + 20, v + 55)
+
+
 def px_frame(spec, t, stars):
     arr = np.empty((PX_H, PX_W, 3), np.uint8)
-    arr[:] = PX_BG
     typ, a, b = spec["type"], spec.get("a"), spec.get("b")
-    speed = 22 if typ == "travel" else 3
-    for sx, sy, ph in stars:
-        v = 140 + int(100 * math.sin(t * 2.2 + ph))
-        arr[int(sy + t * speed) % PX_H, sx] = (v, v, min(255, v + 40))
+    space = (a in SPACE_SET) if a else (spec.get("bg", "space") == "space")
+    if typ in ("orbit", "compare", "travel"):
+        space = True
+    _bg(arr, t, stars, space, 22 if typ == "travel" else 3)
     if typ == "single" and a in ("meteor", "comet"):
         r = 10 if a == "meteor" else 12
         ph = (t % 2.6) / 2.6
@@ -640,10 +883,20 @@ def px_frame(spec, t, stars):
     elif typ == "single" and a == "satellite":
         ph = (t % 6.0) / 6.0
         blit(arr, sprite(a, 20), 15 + 105 * ph, (140 if spec.get("first") else 105) + int(round(2 * math.sin(t * 2))))
+    elif typ == "single" and spec.get("zoom") and spec.get("dur"):
+        r = int(round(20 + 12 * min(1.0, t / max(spec["dur"], 1.0))))
+        blit(arr, sprite(anim_name(a, t), r), PX_W // 2, 105 + int(round(2 * math.sin(t * 1.6))))
     elif typ == "single":
         r = 24 if spec.get("first") else 30
         cy = 140 if spec.get("first") else 105
-        blit(arr, sprite(a, r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
+        blit(arr, sprite(anim_name(a, t), r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
+    elif typ == "pair":
+        for nm, cx in ((a, 34), (b, 100)):
+            blit(arr, sprite(anim_name(nm, t), 22), cx, 112 + int(round(1.5 * math.sin(t * 1.6 + cx))))
+        if spec.get("op") == "arrow":
+            blit(arr, sprite("op_arrow", 12), 67, 112)
+        elif spec.get("op") == "plus":
+            blit(arr, sprite("op_plus", 6), 67, 112)
     elif typ == "orbit":
         cx, cy, orr = 67, 112, 46
         for deg in range(0, 360, 6):
@@ -677,6 +930,7 @@ def px_frame(spec, t, stars):
 def px_render(spec, dur, path):
     """ピクセルの動画(音なし)を作る。低解像度のまま送り、ffmpegで8倍に拡大してドットをくっきり保つ"""
     stars = _stars()
+    spec = dict(spec, dur=dur)
     n = int(math.ceil(dur * PX_FPS)) + 1
     logf = open(str(path) + ".log", "w")
     p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
@@ -718,6 +972,8 @@ def split_lines(s, n):
             nxt = rest[idx]
             if nxt in "。、」』）・ーっゃゅょぁぃぅぇぉ":
                 continue
+            if rest[idx - 1].isascii() and rest[idx - 1].isalnum() and nxt.isascii() and nxt.isalnum():
+                continue  # DNA や km などの英数字の途中では切らない
             score = abs(idx - target) + (0 if rest[idx - 1] in "、。はがをにでとのもへやて" else 2)
             if best is None or score < best[0]:
                 best = (score, idx)
@@ -878,7 +1134,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v4 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v6 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -910,7 +1166,9 @@ def preflight():
     if VISUAL_MODE == "pixel":
         if PX_OK:
             step("ピクセルアート描画", lambda: [px_frame({"type": t, "a": "earth", "b": "moon"}, 0.5, _stars())
-                                            for t in ("single", "orbit", "compare", "travel")])
+                                            for t in ("single", "orbit", "compare", "travel")] +
+                                            [px_frame({"type": "pair", "a": "heart", "b": "dna", "op": "arrow"}, 0.5, _stars()),
+                                             px_frame({"type": "single", "a": "atom"}, 0.5, _stars())])
         else:
             raise Fail("【事前チェック失敗】ピクセル描画の部品(Pillow/numpy)が入りません（Geminiは使っていません）。"
                        "ワークフローの「pip install requests」の行を「pip install requests pillow numpy」に変えてください")
@@ -973,11 +1231,27 @@ def main():
     speaker, vname = pick_speaker()
     items, used, used_nasa, credits = [], set(), set(), []
     px_labels_map = {}
+    last_a = None
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
         if VISUAL_MODE == "pixel":
             spec = px_spec(sc.get("pixel"), i == 0)
+            if spec["type"] == "none":
+                g_ = px_guess(sc.get("emphasis", "")) or px_guess(sc.get("narration", ""))
+                if g_:
+                    spec = px_spec({"type": "single", "a": g_}, i == 0)
+                elif last_a:
+                    spec = ({"type": "single", "a": last_a, "zoom": True} if i > 0
+                            else px_spec({"type": "single", "a": last_a}, True))
+                else:
+                    g_ = px_guess(topic + " " + " ".join(script.get("titles", [])))
+                    if g_:
+                        spec = px_spec({"type": "single", "a": g_}, i == 0)
+                if spec["type"] == "none":
+                    spec["bg"] = "space" if (last_a is None or last_a in SPACE_SET) else "lab"
+            if spec.get("a"):
+                last_a = spec["a"]
             pxp = WORK / f"px{i}.mp4"
             px_labels_map[i] = px_render(spec, dur + 0.5, pxp)
             print(f"   シーン{i}: ピクセルアート {spec}")
