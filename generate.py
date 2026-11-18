@@ -195,7 +195,10 @@ def write_script(topic, angle, src, feedback=""):
     人体・生物: heart(心臓・血), brain(脳), eye(目), tooth(歯), bone(骨), dna(DNA・遺伝), cell(細胞), virus(ウイルス・細菌), fish(魚), tree(木), flower(花)
     自然・物理・化学: drop(水), flame(火), bolt(電気・雷), snowflake(氷・雪), cloud(雲・雨・天気), volcano(火山), atom(原子・分子), magnet(磁石), bulb(電球・ひらめき), flask(実験・化学), thermometer(温度・熱)
     食べ物: banana, apple, egg
-  場面の内容に合うものを選ぶ。1シーン目は必ず type=single。同じ指定を連続させない。
+    その他: rainbow(虹), mountain(山), mushroom(キノコ)
+  【重要】絵の名前は、そのシーンの台詞か強調文字に、その言葉（例: 虹、心臓）が出てくるときだけ選ぶ。出てこなければ a を空にする。
+  pair / compare / orbit は、台詞に a と b の両方の言葉が出るときだけ使う。無理に関連づけない。
+  1シーン目は必ず type=single。同じ指定を連続させない。
   原因と結果、変化（例: 水が氷になる）は pair の arrow を使うと分かりやすい。内容に合う名前がなければ a を空にする。
 - titles: クリックしたくなるタイトル3案(各30文字以内。専門用語や数字の羅列だけにせず、誰でも気になる疑問や驚きの形にする。誤字・誤変換がないか確認する)
 - description: 概要欄(200字程度)  hashtags: 5個(#付き)  pinned_comment: 固定コメント案
@@ -369,7 +372,10 @@ PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "�
             "virus": "ウイルス", "fish": "魚", "tree": "木", "flower": "花",
             "drop": "水", "flame": "火", "bolt": "電気", "snowflake": "氷", "cloud": "雲", "volcano": "火山",
             "atom": "原子", "magnet": "磁石", "bulb": "電球", "flask": "実験", "thermometer": "温度",
-            "banana": "バナナ", "apple": "りんご", "egg": "卵"}
+            "banana": "バナナ", "apple": "りんご", "egg": "卵",
+            "rainbow": "虹", "mountain": "山", "mushroom": "キノコ"}
+# 一般的すぎる絵。強調文字に出てくるときだけ使い、動画の主役の絵があれば、そちらを優先する
+PX_GENERIC = {"drop", "cloud", "flask", "thermometer", "bulb"}
 SPACE_BODIES = {"sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune",
                 "black_hole", "galaxy", "asteroid", "comet"}
 SPACE_SET = SPACE_BODIES | {"meteor", "rocket", "satellite"}
@@ -435,6 +441,14 @@ _PAT.update({
                      "WRRRRRW", "WRRRRRW", "WWRRRWW", ".WWWWW."], {"W": (225, 230, 240), "R": (235, 50, 50)}),
     "op_arrow": ([".......Y....", "........Y...", "YYYYYYYYYY..", "........Y...", ".......Y...."], {"Y": (255, 225, 77)}),
     "op_plus": (["..Y..", "..Y..", "YYYYY", "..Y..", "..Y.."], {"Y": (255, 225, 77)}),
+})
+_PAT.update({
+    "mountain": ([".......WW.......", "......WWWW......", ".....WWMMWW.....", "....MMMMMMMM....", "...MMMMMMMMMM...",
+                   "..MMMMMMMMMMMM..", ".MMMMMMMMMMMMMM.", "MMMMMMMMMMMMMMMM"],
+                {"W": (240, 245, 250), "M": (110, 120, 140)}),
+    "mushroom": (["...RRRRR...", ".RRRRWRRRR.", "RRWWRRRRWRR", "RRWWRRRRRRR", "RRRRRRRRRRR", ".SSSSSSSSS.", "....SSS....",
+                  "....SSS....", "....SSS....", "...SSSSS..."],
+                 {"R": (220, 60, 60), "W": (250, 250, 250), "S": (240, 225, 200)}),
 })
 for _k, (_rows, _pal) in _PAT.items():
     assert len({len(x) for x in _rows}) == 1, f"パターンの幅がそろっていません: {_k}"
@@ -612,9 +626,29 @@ def _virus_sprite(r):
     return Image.fromarray(arr, "RGBA")
 
 
+def _rainbow_sprite(r):
+    w, h = 2 * r + 1, r + 5
+    arr = np.zeros((h, w, 4), np.uint8)
+    cols = [(230, 60, 60), (255, 150, 50), (255, 225, 70), (80, 190, 90), (80, 200, 230), (70, 110, 230), (150, 90, 220)]
+    band = (r * 0.55) / 7
+    for y in range(r + 1):
+        for x in range(w):
+            d = math.hypot(x - r, y - r)
+            if r * 0.45 < d <= r:
+                arr[y, x] = (*cols[min(6, int((r - d) / band))], 255)
+    for cx in (int(r * 0.2), int(r * 1.8)):
+        for y in range(r - 3, r + 5):
+            for x in range(w):
+                if ((x - cx) / max(3.0, r * 0.2)) ** 2 + ((y - (r + 1)) / 3.5) ** 2 <= 1:
+                    arr[y, x] = (240, 246, 255, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
 def _make_sprite(name, r):
     mm = re.match(r"([a-z_]+?)(\d*)$", name)
     name, ph = (mm.group(1), int(mm.group(2) or 0)) if mm else (name, 0)
+    if name == "rainbow":
+        return _rainbow_sprite(r)
     if name == "flame":
         return _flame_sprite(r, ph)
     if name == "atom":
@@ -801,8 +835,62 @@ _PX_KEYS = [
     (r"雷|稲妻|電気|電流|静電気", "bolt"), (r"雪|氷|凍", "snowflake"), (r"雲|雨|天気", "cloud"),
     (r"水滴|水(?![星素曜平準])", "drop"), (r"原子|分子|電子", "atom"), (r"磁石|磁場|磁力", "magnet"),
     (r"電球", "bulb"), (r"実験|化学|薬品|試薬", "flask"), (r"温度|体温|熱|気温", "thermometer"),
+    (r"虹", "rainbow"), (r"山脈|山頂|登山|富士山|山(?![脈])", "mountain"), (r"キノコ|きのこ|茸", "mushroom"),
     (r"バナナ", "banana"), (r"りんご|リンゴ|林檎", "apple"), (r"卵|たまご", "egg"),
 ]
+
+
+_PX_RE = {name: re.compile(pat) for pat, name in _PX_KEYS}
+
+
+def px_ok(name, text):
+    """その絵の言葉が、実際に台詞・強調文字に出てくるか"""
+    r = _PX_RE.get(name)
+    return bool(r and r.search(text or ""))
+
+
+def px_choose(sc, raw, first, last_a, main_a):
+    """絵の指定を検証する。台詞にない絵は取り消し、一般的な絵は動画の主役の絵を優先する"""
+    emph, narr = sc.get("emphasis", ""), sc.get("narration", "")
+    both = emph + " " + narr
+
+    def ok(name):
+        if not name or not px_ok(name, both):
+            return False
+        return (name not in PX_GENERIC) or px_ok(name, emph)
+
+    spec = px_spec(raw, first)
+    a, b = spec.get("a"), spec.get("b")
+    if spec["type"] != "none":
+        if spec["type"] in ("pair", "orbit", "compare") and not (ok(a) and ok(b)):
+            keep = a if ok(a) else (b if ok(b) else None)
+            spec = {"type": "single", "a": keep, "first": first} if keep else {"type": "none"}
+            if not first and keep:
+                spec.pop("first", None)
+        elif spec["type"] in ("single", "travel") and not ok(a):
+            spec = {"type": "none"}
+    if spec["type"] == "none":
+        g_ = px_guess(emph) or next((x for x in [px_guess(narr)] if x and x not in PX_GENERIC), None)
+        if g_:
+            spec = px_spec({"type": "single", "a": g_}, first)
+        elif main_a:
+            spec = px_spec({"type": "single", "a": main_a}, first)
+            if not first:
+                spec["zoom"] = True
+        elif last_a:
+            spec = px_spec({"type": "single", "a": last_a}, first)
+            if not first:
+                spec["zoom"] = True
+    names = [spec.get(k) for k in ("a", "b") if spec.get(k)]
+    if names and all(n in PX_GENERIC for n in names) and main_a and main_a not in names:
+        spec = px_spec({"type": "single", "a": main_a}, first)
+        if not first and main_a == last_a:
+            spec["zoom"] = True
+    if main_a:  # 背景は、動画の主役に合わせて統一する
+        spec["bg"] = "space" if main_a in SPACE_SET else "lab"
+    elif spec["type"] == "none":
+        spec["bg"] = "space" if (last_a is None or last_a in SPACE_SET) else "lab"
+    return spec
 
 
 def px_guess(text):
@@ -864,6 +952,8 @@ def px_frame(spec, t, stars):
     arr = np.empty((PX_H, PX_W, 3), np.uint8)
     typ, a, b = spec["type"], spec.get("a"), spec.get("b")
     space = (a in SPACE_SET) if a else (spec.get("bg", "space") == "space")
+    if spec.get("bg") in ("space", "lab"):
+        space = spec["bg"] == "space"
     if typ in ("orbit", "compare", "travel"):
         space = True
     _bg(arr, t, stars, space, 22 if typ == "travel" else 3)
@@ -1134,7 +1224,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v6 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v7 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -1232,24 +1322,13 @@ def main():
     items, used, used_nasa, credits = [], set(), set(), []
     px_labels_map = {}
     last_a = None
+    main_a = px_guess(topic) or px_guess(" ".join(script.get("titles", [])[:1]))
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
         if VISUAL_MODE == "pixel":
-            spec = px_spec(sc.get("pixel"), i == 0)
-            if spec["type"] == "none":
-                g_ = px_guess(sc.get("emphasis", "")) or px_guess(sc.get("narration", ""))
-                if g_:
-                    spec = px_spec({"type": "single", "a": g_}, i == 0)
-                elif last_a:
-                    spec = ({"type": "single", "a": last_a, "zoom": True} if i > 0
-                            else px_spec({"type": "single", "a": last_a}, True))
-                else:
-                    g_ = px_guess(topic + " " + " ".join(script.get("titles", [])))
-                    if g_:
-                        spec = px_spec({"type": "single", "a": g_}, i == 0)
-                if spec["type"] == "none":
-                    spec["bg"] = "space" if (last_a is None or last_a in SPACE_SET) else "lab"
+            spec = px_choose(sc, sc.get("pixel"), i == 0, last_a, main_a)
+            pxp = WORK / f"px{i}.mp4"
             if spec.get("a"):
                 last_a = spec["a"]
             pxp = WORK / f"px{i}.mp4"
