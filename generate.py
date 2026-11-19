@@ -198,7 +198,7 @@ def write_script(topic, angle, src, feedback=""):
     人体・生物: heart(心臓・血), brain(脳), eye(目), tooth(歯), bone(骨), dna(DNA・遺伝), cell(細胞), virus(ウイルス・細菌), fish(魚), tree(木), flower(花)
     自然・物理・化学: drop(水), flame(火), bolt(電気・雷), snowflake(氷・雪), cloud(雲・雨・天気), volcano(火山), atom(原子・分子), magnet(磁石), bulb(電球・ひらめき), flask(実験・化学), thermometer(温度・熱)
     食べ物: banana, apple, egg
-    その他: rainbow(虹), mountain(山), mushroom(キノコ)
+    その他: rainbow(虹), mountain(山), mushroom(キノコ), clock(時計・時間), person(人・体全体), blood(血), lung(肺・呼吸), wave(音・波)
   【重要】絵の名前は、そのシーンの台詞か強調文字に、その言葉（例: 虹、心臓）が出てくるときだけ選ぶ。出てこなければ a を空にする。
   pair / compare / orbit は、台詞に a と b の両方の言葉が出るときだけ使う。無理に関連づけない。
   1シーン目は必ず type=single。同じ指定を連続させない。
@@ -376,9 +376,10 @@ PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "�
             "drop": "水", "flame": "火", "bolt": "電気", "snowflake": "氷", "cloud": "雲", "volcano": "火山",
             "atom": "原子", "magnet": "磁石", "bulb": "電球", "flask": "実験", "thermometer": "温度",
             "banana": "バナナ", "apple": "りんご", "egg": "卵",
-            "rainbow": "虹", "mountain": "山", "mushroom": "キノコ"}
+            "rainbow": "虹", "mountain": "山", "mushroom": "キノコ",
+            "clock": "時計", "person": "人", "blood": "血", "lung": "肺", "wave": "音・波"}
 # 一般的すぎる絵。強調文字に出てくるときだけ使い、動画の主役の絵があれば、そちらを優先する
-PX_GENERIC = {"drop", "cloud", "flask", "thermometer", "bulb"}
+PX_GENERIC = {"drop", "cloud", "flask", "thermometer", "bulb", "clock"}
 SPACE_BODIES = {"sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune",
                 "black_hole", "galaxy", "asteroid", "comet"}
 SPACE_SET = SPACE_BODIES | {"meteor", "rocket", "satellite"}
@@ -453,6 +454,22 @@ _PAT.update({
                   "....SSS....", "....SSS....", "...SSSSS..."],
                  {"R": (220, 60, 60), "W": (250, 250, 250), "S": (240, 225, 200)}),
 })
+_PAT.update({
+    "person": (["...SSS...", "..SSSSS..", "..SSSSS..", "...SSS...", ".BBBBBBB.", "BBBBBBBBB", "BBBBBBBBB", "SS.BBB.SS",
+                "SS.BBB.SS", "...BBB...", "...LLL...", "...LLL...", "...LLL...", "..KK.KK.."],
+               {"S": (250, 205, 160), "B": (70, 130, 220), "L": (60, 70, 120), "K": (50, 40, 40)}),
+    "blood": (["....B....", "...BBB...", "...BBB...", "..BBBBB..", ".BBBBBBB.", ".BWBBBBB.", "BBWBBBBBB", "BBBBBBBBB",
+               "BBBBBBBBB", ".BBBBBBB.", "..BBBBB.."], {"B": (210, 40, 60), "W": (255, 170, 180)}),
+    "lung": ([".....TTT.....", "......T......", "..LLL.T.LLL..", ".LLLLLTLLLLL.", "LLLLLL.LLLLLL", "LLLLLL.LLLLLL",
+              "LLLLLL.LLLLLL", "LLLLLL.LLLLLL", ".LLLLL.LLLLL.", "..LLL...LLL.."],
+             {"L": (240, 140, 150), "T": (200, 170, 170)}),
+})
+_DIG = {"0": ["XXX", "X.X", "X.X", "X.X", "XXX"], "1": [".X.", "XX.", ".X.", ".X.", "XXX"],
+        "2": ["XXX", "..X", "XXX", "X..", "XXX"], "3": ["XXX", "..X", "XXX", "..X", "XXX"],
+        "4": ["X.X", "X.X", "XXX", "..X", "..X"], "5": ["XXX", "X..", "XXX", "..X", "XXX"],
+        "6": ["XXX", "X..", "XXX", "X.X", "XXX"], "7": ["XXX", "..X", "..X", "..X", "..X"],
+        "8": ["XXX", "X.X", "XXX", "X.X", "XXX"], "9": ["XXX", "X.X", "XXX", "..X", "XXX"],
+        ".": [".", ".", ".", ".", "X"]}
 for _k, (_rows, _pal) in _PAT.items():
     assert len({len(x) for x in _rows}) == 1, f"パターンの幅がそろっていません: {_k}"
 _SPR = {}
@@ -647,9 +664,50 @@ def _rainbow_sprite(r):
     return Image.fromarray(arr, "RGBA")
 
 
+def _clock_sprite(r, ph):
+    n = 2 * r + 1
+    yy, xx = np.mgrid[0:n, 0:n]
+    d = np.hypot(xx - r, yy - r)
+    arr = np.zeros((n, n, 4), np.uint8)
+    arr[d <= r] = (240, 240, 245, 255)
+    arr[(d > r - 2) & (d <= r)] = (60, 60, 85, 255)
+    for k in range(12):
+        ang = k * math.pi / 6
+        for t_ in np.linspace(r * 0.78, r * 0.9, 6):
+            x, y = int(round(r + t_ * math.sin(ang))), int(round(r - t_ * math.cos(ang)))
+            arr[y, x] = (60, 60, 85, 255)
+    for ang, ln, col in ((ph * math.pi / 6, 0.78, (220, 60, 60)), (ph * math.pi / 72, 0.5, (40, 40, 60))):
+        for t_ in np.linspace(0, r * ln, int(r * ln * 2) + 2):
+            x, y = int(round(r + t_ * math.sin(ang))), int(round(r - t_ * math.cos(ang)))
+            for dx in (0, 1):
+                if 0 <= x + dx < n and 0 <= y < n:
+                    arr[y, x + dx] = (*col, 255)
+    arr[r - 1:r + 2, r - 1:r + 2] = (40, 40, 60, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _wave_sprite(r, ph):
+    w, h = 2 * r + 1, r + 1
+    arr = np.zeros((h, w, 4), np.uint8)
+    amp = h * 0.38
+    for x in range(w):
+        y = h / 2 + amp * math.sin(x * 2 * math.pi * 2.5 / w + ph * math.pi / 6)
+        k = x / max(1, w - 1)
+        col = (int(90 + 70 * k), int(170 + 50 * k), 255)
+        for dy in (-1, 0, 1, 2):
+            yy = int(round(y)) + dy
+            if 0 <= yy < h:
+                arr[yy, x] = (*col, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
 def _make_sprite(name, r):
     mm = re.match(r"([a-z_]+?)(\d*)$", name)
     name, ph = (mm.group(1), int(mm.group(2) or 0)) if mm else (name, 0)
+    if name == "clock":
+        return _clock_sprite(r, ph)
+    if name == "wave":
+        return _wave_sprite(r, ph)
     if name == "rainbow":
         return _rainbow_sprite(r)
     if name == "flame":
@@ -831,13 +889,15 @@ _PX_KEYS = [
     (r"太陽(?!系)", "sun"), (r"地球", "earth"), (r"火星", "mars"), (r"木星", "jupiter"), (r"土星", "saturn"),
     (r"金星", "venus"), (r"水星", "mercury"), (r"天王星", "uranus"), (r"海王星", "neptune"),
     (r"(?<![0-9０-９ヶかカ一二三四五六七八九十毎今来先翌])月(?![曜間末初日刊額給収])", "moon"),
-    (r"心臓|血液|血管|脈拍", "heart"), (r"脳|神経", "brain"), (r"眼|視力|瞳|目玉|目[がをはにで]", "eye"),
+    (r"心臓|血管|脈拍", "heart"), (r"脳|神経", "brain"), (r"眼|視力|瞳|目玉|目[がをはにで]", "eye"),
     (r"歯", "tooth"), (r"骨", "bone"), (r"DNA|遺伝子|ゲノム", "dna"), (r"細胞", "cell"),
     (r"ウイルス|細菌", "virus"), (r"魚|海の生き物", "fish"), (r"(?<![0-9０-９])木(?![星曜])|樹木|森", "tree"),
     (r"花|植物", "flower"), (r"火山|噴火|マグマ", "volcano"), (r"炎|火(?![星山])", "flame"),
     (r"雷|稲妻|電気|電流|静電気", "bolt"), (r"雪|氷|凍", "snowflake"), (r"雲|雨|天気", "cloud"),
     (r"水滴|水(?![星素曜平準])", "drop"), (r"原子|分子|電子", "atom"), (r"磁石|磁場|磁力", "magnet"),
     (r"電球", "bulb"), (r"実験|化学|薬品|試薬", "flask"), (r"温度|体温|熱|気温", "thermometer"),
+    (r"時計|時間|一生|寿命|何年", "clock"), (r"肺|呼吸|息", "lung"), (r"血液|血(?!管)|出血", "blood"),
+    (r"人間|身体|全身|人体|赤ちゃん|大人|子ども|子供", "person"), (r"音|波|振動|周波数", "wave"),
     (r"虹", "rainbow"), (r"山脈|山頂|登山|富士山|山(?![脈])", "mountain"), (r"キノコ|きのこ|茸", "mushroom"),
     (r"バナナ", "banana"), (r"りんご|リンゴ|林檎", "apple"), (r"卵|たまご", "egg"),
 ]
@@ -852,8 +912,23 @@ def px_ok(name, text):
     return bool(r and r.search(text or ""))
 
 
-def px_choose(sc, raw, first, last_a, main_a):
-    """絵の指定を検証する。台詞にない絵は取り消し、一般的な絵は動画の主役の絵を優先する"""
+def px_number(text):
+    """「30億回」「40度」のような数字と単位を見つける。見つからなければ None"""
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(兆|億|万)?\s*(%|倍|回|度|ミリリットル|リットル|ml|mL|km|キロ|メートル|cm|kg|グラム|g|L|℃|年|日|時間|分|秒|個|人|種類|本|Hz|ヘルツ|m)?", text or ""):
+        v, u1, u2 = m.group(1), m.group(2) or "", m.group(3) or ""
+        if not (u1 or u2):
+            continue
+        n = float(v)
+        if u2 == "年" and n >= 1000:
+            continue
+        if n < 2 and "." not in v:
+            continue
+        return n, u1 + u2
+    return None
+
+
+def px_choose(sc, raw, first, last_a, main_a, hist=()):
+    """絵の指定を決める。台詞にない絵は取り消し、数字の場面はカウントアップ、同じ絵が続くときは文字カードにする"""
     emph, narr = sc.get("emphasis", ""), sc.get("narration", "")
     both = emph + " " + narr
 
@@ -872,9 +947,17 @@ def px_choose(sc, raw, first, last_a, main_a):
                 spec.pop("first", None)
         elif spec["type"] in ("single", "travel") and not ok(a):
             spec = {"type": "none"}
+    # 強調文字に数字があれば、カウントアップの場面にする(1シーン目は除く)
+    num = None if first else px_number(emph)
+    if num and spec["type"] in ("none", "single"):
+        a_ = spec.get("a") or px_guess(emph) or px_guess(narr) or main_a
+        spec = {"type": "counter", "a": a_, "num": num[0], "label": num[1]}
     if spec["type"] == "none":
         g_ = px_guess(emph) or next((x for x in [px_guess(narr)] if x and x not in PX_GENERIC), None)
-        if g_:
+        num2 = None if first else px_number(narr)
+        if num2:
+            spec = {"type": "counter", "a": g_ or main_a, "num": num2[0], "label": num2[1]}
+        elif g_:
             spec = px_spec({"type": "single", "a": g_}, first)
         elif main_a:
             spec = px_spec({"type": "single", "a": main_a}, first)
@@ -885,13 +968,18 @@ def px_choose(sc, raw, first, last_a, main_a):
             if not first:
                 spec["zoom"] = True
     names = [spec.get(k) for k in ("a", "b") if spec.get(k)]
-    if names and all(n in PX_GENERIC for n in names) and main_a and main_a not in names:
+    if spec["type"] in ("single", "pair") and names and all(n in PX_GENERIC for n in names) and main_a and main_a not in names:
         spec = px_spec({"type": "single", "a": main_a}, first)
         if not first and main_a == last_a:
             spec["zoom"] = True
+    # 同じ絵が3場面続くなら、文字カードにして、変化を付ける
+    if spec["type"] == "single" and not first:
+        recent = [h.get("a") for h in list(hist)[-2:] if h.get("type") in ("single", "counter")]
+        if len(recent) == 2 and all(x == spec.get("a") for x in recent):
+            spec = {"type": "card"}
     if main_a:  # 背景は、動画の主役に合わせて統一する
         spec["bg"] = "space" if main_a in SPACE_SET else "lab"
-    elif spec["type"] == "none":
+    elif spec["type"] in ("none", "card"):
         spec["bg"] = "space" if (last_a is None or last_a in SPACE_SET) else "lab"
     return spec
 
@@ -909,6 +997,8 @@ def px_guess(text):
 def px_labels(spec):
     """文字は、くっきり表示するため、動画合成の段階で重ねる: (文字, 中心x, y, サイズ, 色)"""
     typ, a, b = spec["type"], spec.get("a"), spec.get("b")
+    if typ == "counter":
+        return [(spec["label"], 540, 1195, 76, "0xFFE14D")] if spec.get("label") else []
     if typ == "single" and not spec.get("first"):
         return [(PX_NAMES[a], 540, 1110, 56, "white")]
     if typ == "pair":
@@ -935,6 +1025,10 @@ def anim_name(a, t):
         return f"atom{int(t * 8) % 16}"
     if a == "flame":
         return f"flame{int(t * 10) % 3}"
+    if a == "clock":
+        return f"clock{int(t * 4) % 12}"
+    if a == "wave":
+        return f"wave{int(t * 6) % 12}"
     return a
 
 
@@ -983,6 +1077,33 @@ def px_frame(spec, t, stars):
         r = 24 if spec.get("first") else 30
         cy = 140 if spec.get("first") else 105
         blit(arr, sprite(anim_name(a, t), r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
+    elif typ == "counter":
+        if a:
+            blit(arr, sprite(anim_name(a, t), 18), PX_W // 2, 84 + int(round(1.5 * math.sin(t * 1.6))))
+        total = max(spec.get("dur", 4.0), 1.0)
+        p = min(1.0, t / (0.65 * total))
+        val = spec["num"] * (1 - (1 - p) ** 3)
+        txt = str(int(round(val))) if float(spec["num"]).is_integer() else f"{val:.1f}"
+        full = str(int(spec["num"])) if float(spec["num"]).is_integer() else f"{spec['num']:.1f}"
+        sc_ = next(k for k in (6, 5, 4, 3, 2, 1) if len(full) * 4 * k - k <= 120)
+        wd_full = len(full) * 4 * sc_ - sc_
+        wd = len(txt) * 4 * sc_ - sc_
+        x0 = (PX_W - wd_full) // 2 + (wd_full - wd)  # 右そろえ(増えても位置が動かない)
+        for ch in txt:
+            for ry, row in enumerate(_DIG[ch]):
+                for rx, c in enumerate(row):
+                    if c == "X":
+                        for dy in range(sc_):
+                            for dx in range(sc_):
+                                yy, xx = 118 + ry * sc_ + dy, x0 + rx * sc_ + dx
+                                if 0 <= xx < PX_W and 0 <= yy < PX_H:
+                                    arr[yy, xx] = (255, 225, 77)
+            x0 += (len(_DIG[ch][0]) + 1) * sc_
+    elif typ == "card":
+        for k, (sx, sy) in enumerate([(18, 60), (116, 72), (24, 168), (110, 160)]):
+            if (int(t * 2) + k) % 2 == 0:
+                for dx, dy in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    arr[sy + dy, sx + dx] = (255, 225, 77)
     elif typ == "pair":
         for nm, cx in ((a, 34), (b, 100)):
             blit(arr, sprite(anim_name(nm, t), 22), cx, 112 + int(round(1.5 * math.sin(t * 1.6 + cx))))
@@ -1104,7 +1225,7 @@ def probe(path):
     st = j["streams"][0]
     return int(st["width"]), int(st["height"]), float(j.get("format", {}).get("duration") or 0)
 
-def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None):
+def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None, card=False):
     total = dur + 0.15
     elines = split_lines(sc["emphasis"], 7 if i == 0 else 8)
     efs = []
@@ -1154,6 +1275,11 @@ def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None):
         tg.write_text("知っていましたか？", encoding="utf-8")
         vf += (f",drawtext=fontfile={F}:textfile='{tg}':fontsize=84:fontcolor=white:borderw=8:"
                f"bordercolor=black:x=(w-text_w)/2:y={y0 + len(efs) * 150 + 20}")
+    elif card:
+        y0 = 640 - (len(efs) - 1) * 70
+        for k, ef in enumerate(efs):
+            vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=116:fontcolor=0xFFE14D:borderw=10:"
+                   f"bordercolor=black:x=(w-text_w)/2:y={y0 + k * 140}")
     else:
         for k, ef in enumerate(efs):
             vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
@@ -1227,7 +1353,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v8 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v9 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -1261,7 +1387,9 @@ def preflight():
             step("ピクセルアート描画", lambda: [px_frame({"type": t, "a": "earth", "b": "moon"}, 0.5, _stars())
                                             for t in ("single", "orbit", "compare", "travel")] +
                                             [px_frame({"type": "pair", "a": "heart", "b": "dna", "op": "arrow"}, 0.5, _stars()),
-                                             px_frame({"type": "single", "a": "atom"}, 0.5, _stars())])
+                                             px_frame({"type": "single", "a": "atom"}, 0.5, _stars()),
+                                             px_frame({"type": "counter", "a": "heart", "num": 30.0, "label": "億回", "dur": 4.0}, 1.0, _stars()),
+                                             px_frame({"type": "card", "bg": "lab"}, 0.5, _stars())])
         else:
             raise Fail("【事前チェック失敗】ピクセル描画の部品(Pillow/numpy)が入りません（Geminiは使っていません）。"
                        "ワークフローの「pip install requests」の行を「pip install requests pillow numpy」に変えてください")
@@ -1324,18 +1452,23 @@ def main():
     speaker, vname = pick_speaker()
     items, used, used_nasa, credits = [], set(), set(), []
     px_labels_map = {}
+    hist = []
+    card_scenes = set()
     last_a = None
     main_a = px_guess(topic) or px_guess(" ".join(script.get("titles", [])[:1]))
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
         dur = tts(sc["narration"], speaker, wav)
         if VISUAL_MODE == "pixel":
-            spec = px_choose(sc, sc.get("pixel"), i == 0, last_a, main_a)
+            spec = px_choose(sc, sc.get("pixel"), i == 0, last_a, main_a, hist)
+            hist.append(spec)
             pxp = WORK / f"px{i}.mp4"
             if spec.get("a"):
                 last_a = spec["a"]
             pxp = WORK / f"px{i}.mp4"
             px_labels_map[i] = px_render(spec, dur + 0.5, pxp)
+            if spec["type"] == "card":
+                card_scenes.add(i)
             print(f"   シーン{i}: ピクセルアート {spec}")
             items.append((sc, pxp, wav, dur))
             continue
@@ -1370,7 +1503,7 @@ def main():
     print("5) シーン合成")
     files, starts, t0 = [], [], 0.0
     for i, (sc, bg, wav, dur) in enumerate(items):
-        f, total = render_scene(i, sc, bg, wav, dur, F, pixel=(i in px_labels_map), labels=px_labels_map.get(i))
+        f, total = render_scene(i, sc, bg, wav, dur, F, pixel=(i in px_labels_map), labels=px_labels_map.get(i), card=(i in card_scenes))
         files.append(f); starts.append(t0); t0 += total
     print("6) 全体合成"); assemble(files, starts, t0)
     print("7) サムネイル"); thumbnail(script["titles"][0], F)
