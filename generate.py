@@ -192,7 +192,7 @@ def write_script(topic, angle, src, feedback=""):
 - nasa_query: NASAの画像・映像ライブラリで見つかりそうな英語の検索語(1〜3語。例: black hole, solar flare, Earth from orbit, Mars surface, nebula)。人物ではなく天体・地球・現象・探査機など、NASAが撮影した一般的な対象にする。そのシーンの内容に近い語にする。
 - pixel: そのシーンの映像（ピクセルアート）の指定。type は次のどれか:
   single(aの絵を1つ見せる) / pair(aとbを並べる。op=arrow: aがbになる・向かう、plus: aとbの組み合わせ、vs: aとbの比較) /
-  orbit(aの周りをbが回る。天体のみ) / compare(aとbの大きさ比べ。太陽・惑星・月のみ) / travel(ロケットがaへ向かう。天体のみ)。
+  chain(aがbになり、さらにcになる。原因→結果などの流れ。a,b,cの3つを指定) / orbit(aの周りをbが回る。天体のみ) / compare(aとbの大きさ比べ。太陽・惑星・月のみ) / travel(ロケットがaへ向かう。天体のみ)。
   a と b は次の名前から選ぶ:
     宇宙: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune, black_hole, galaxy, asteroid, comet, meteor, rocket, satellite
     人体・生物: heart(心臓・血), brain(脳), eye(目), tooth(歯), bone(骨), dna(DNA・遺伝), cell(細胞), virus(ウイルス・細菌), fish(魚), tree(木), flower(花)
@@ -200,7 +200,7 @@ def write_script(topic, angle, src, feedback=""):
     食べ物: banana, apple, egg
     その他: rainbow(虹), mountain(山), mushroom(キノコ), clock(時計・時間), person(人・体全体), blood(血), lung(肺・呼吸), wave(音・波)
   【重要】絵の名前は、そのシーンの台詞か強調文字に、その言葉（例: 虹、心臓）が出てくるときだけ選ぶ。出てこなければ a を空にする。
-  pair / compare / orbit は、台詞に a と b の両方の言葉が出るときだけ使う。無理に関連づけない。
+  pair / compare / orbit は、台詞に a と b の両方の言葉が、chain は a, b, c の3つの言葉が出るときだけ使う。無理に関連づけない。
   1シーン目は必ず type=single。同じ指定を連続させない。
   原因と結果、変化（例: 水が氷になる）は pair の arrow を使うと分かりやすい。内容に合う名前がなければ a を空にする。
 - titles: クリックしたくなるタイトル3案(各30文字以内。専門用語や数字の羅列だけにせず、誰でも気になる疑問や驚きの形にする。誤字・誤変換がないか確認する)
@@ -208,7 +208,7 @@ def write_script(topic, angle, src, feedback=""):
 - facts: 台本で述べた事実の短いリスト(各々資料のどこに基づくか分かる形で)
 {('前回の指摘(必ず修正): ' + feedback) if feedback else ''}
 JSONのみで返す:
-{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":"","pixel":{{"type":"","a":"","b":"","op":""}}}}],
+{{"titles":["","",""],"scenes":[{{"narration":"","emphasis":"","pexels_query":"","nasa_query":"","pixel":{{"type":"","a":"","b":"","c":"","op":""}}}}],
 "description":"","hashtags":["#"],"pinned_comment":"","facts":[""]}}"""
     return gemini(p)
 
@@ -871,6 +871,11 @@ def px_spec(raw, first):
         return {"type": "none"}
     if first:
         return {"type": "single", "a": a, "first": True}
+    c = raw.get("c") if raw.get("c") in PX_NAMES else None
+    if typ == "chain" and b and c and len({a, b, c}) == 3:
+        return {"type": "chain", "a": a, "b": b, "c": c}
+    if typ == "chain" and b and a != b:
+        return {"type": "pair", "a": a, "b": b, "op": "arrow"}
     if typ == "compare" and b and a in PX_DIAM and b in PX_DIAM and a != b:
         return {"type": "compare", "a": a, "b": b}
     if typ == "orbit" and b and a != b and a in SPACE_BODIES and b in SPACE_BODIES:
@@ -939,6 +944,14 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
 
     spec = px_spec(raw, first)
     a, b = spec.get("a"), spec.get("b")
+    if spec["type"] == "chain":
+        ks = [x for x in (a, b, spec.get("c")) if ok(x)]
+        if len(ks) == 2:
+            spec = {"type": "pair", "a": ks[0], "b": ks[1], "op": "arrow"}
+        elif len(ks) == 1:
+            spec = {"type": "single", "a": ks[0]}
+        elif len(ks) == 0:
+            spec = {"type": "none"}
     if spec["type"] != "none":
         if spec["type"] in ("pair", "orbit", "compare") and not (ok(a) and ok(b)):
             keep = a if ok(a) else (b if ok(b) else None)
@@ -972,10 +985,16 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
         spec = px_spec({"type": "single", "a": main_a}, first)
         if not first and main_a == last_a:
             spec["zoom"] = True
-    # 同じ絵が3場面続くなら、文字カードにして、変化を付ける
-    if spec["type"] == "single" and not first:
-        recent = [h.get("a") for h in list(hist)[-2:] if h.get("type") in ("single", "counter")]
-        if len(recent) == 2 and all(x == spec.get("a") for x in recent):
+    # 前の場面と同じ絵が続くなら、見せ方を変える(脈打つ / たくさん並ぶ / 拡大)。使い切ったら文字カード
+    if spec["type"] == "single" and not first and hist and hist[-1].get("a") == spec.get("a"):
+        used = {h.get("fx") for h in list(hist)[-3:]}
+        for f in ("pulse", "many", "zoom"):
+            if f not in used:
+                spec["fx"] = f
+                if f == "zoom":
+                    spec["zoom"] = True
+                break
+        else:
             spec = {"type": "card"}
     if main_a:  # 背景は、動画の主役に合わせて統一する
         spec["bg"] = "space" if main_a in SPACE_SET else "lab"
@@ -998,7 +1017,12 @@ def px_labels(spec):
     """文字は、くっきり表示するため、動画合成の段階で重ねる: (文字, 中心x, y, サイズ, 色)"""
     typ, a, b = spec["type"], spec.get("a"), spec.get("b")
     if typ == "counter":
-        return [(spec["label"], 540, 1195, 76, "0xFFE14D")] if spec.get("label") else []
+        ly = 1245 if spec.get("label") == "%" and spec["num"] <= 100 else 1195
+        return [(spec["label"], 540, ly, 76, "0xFFE14D")] if spec.get("label") else []
+    if typ == "chain":
+        return [(PX_NAMES[x], cx * 8, 1060, 46, "white") for x, cx in ((a, 24), (b, 67), (spec["c"], 110))]
+    if typ == "single" and spec.get("fx") == "many":
+        return []
     if typ == "single" and not spec.get("first"):
         return [(PX_NAMES[a], 540, 1110, 56, "white")]
     if typ == "pair":
@@ -1070,6 +1094,16 @@ def px_frame(spec, t, stars):
     elif typ == "single" and a == "satellite":
         ph = (t % 6.0) / 6.0
         blit(arr, sprite(a, 20), 15 + 105 * ph, (140 if spec.get("first") else 105) + int(round(2 * math.sin(t * 2))))
+    elif typ == "single" and spec.get("fx") == "pulse":
+        r = 22 + int(round(5 * abs(math.sin(t * 3.0))))
+        blit(arr, sprite(anim_name(a, t), r), PX_W // 2, 105)
+    elif typ == "single" and spec.get("fx") == "many":
+        k = 0
+        for gy in (76, 108, 140):
+            for gx in (30, 67, 104):
+                if t >= k * 0.2:
+                    blit(arr, sprite(anim_name(a, t), 10), gx, gy + int(round(1.5 * math.sin(t * 2 + k))))
+                k += 1
     elif typ == "single" and spec.get("zoom") and spec.get("dur"):
         r = int(round(20 + 12 * min(1.0, t / max(spec["dur"], 1.0))))
         blit(arr, sprite(anim_name(a, t), r), PX_W // 2, 105 + int(round(2 * math.sin(t * 1.6))))
@@ -1078,14 +1112,17 @@ def px_frame(spec, t, stars):
         cy = 140 if spec.get("first") else 105
         blit(arr, sprite(anim_name(a, t), r), PX_W // 2, cy + int(round(2 * math.sin(t * 1.6))))
     elif typ == "counter":
+        gauge = spec.get("label") == "%" and spec["num"] <= 100
         if a:
-            blit(arr, sprite(anim_name(a, t), 18), PX_W // 2, 84 + int(round(1.5 * math.sin(t * 1.6))))
+            blit(arr, sprite(anim_name(a, t), 18 + (1 if int(t * 3) % 2 == 0 else 0)), PX_W // 2,
+                 84 + int(round(1.5 * math.sin(t * 1.6))))
         total = max(spec.get("dur", 4.0), 1.0)
         p = min(1.0, t / (0.65 * total))
         val = spec["num"] * (1 - (1 - p) ** 3)
         txt = str(int(round(val))) if float(spec["num"]).is_integer() else f"{val:.1f}"
         full = str(int(spec["num"])) if float(spec["num"]).is_integer() else f"{spec['num']:.1f}"
-        sc_ = next(k for k in (6, 5, 4, 3, 2, 1) if len(full) * 4 * k - k <= 120)
+        sc_ = next(k for k in ((4, 3, 2, 1) if gauge else (6, 5, 4, 3, 2, 1)) if len(full) * 4 * k - k <= 120)
+        ty = 110 if gauge else 118
         wd_full = len(full) * 4 * sc_ - sc_
         wd = len(txt) * 4 * sc_ - sc_
         x0 = (PX_W - wd_full) // 2 + (wd_full - wd)  # 右そろえ(増えても位置が動かない)
@@ -1095,10 +1132,22 @@ def px_frame(spec, t, stars):
                     if c == "X":
                         for dy in range(sc_):
                             for dx in range(sc_):
-                                yy, xx = 118 + ry * sc_ + dy, x0 + rx * sc_ + dx
+                                yy, xx = ty + ry * sc_ + dy, x0 + rx * sc_ + dx
                                 if 0 <= xx < PX_W and 0 <= yy < PX_H:
                                     arr[yy, xx] = (255, 225, 77)
             x0 += (len(_DIG[ch][0]) + 1) * sc_
+        if gauge:  # 0〜100%の目盛りが、数字と一緒に満ちていく
+            arr[142, 17:118] = (200, 200, 210); arr[153, 17:118] = (200, 200, 210)
+            arr[142:154, 17] = (200, 200, 210); arr[142:154, 117] = (200, 200, 210)
+            fw = int(round(98 * min(1.0, val / 100.0)))
+            if fw > 0:
+                arr[144:152, 19:19 + fw] = (255, 225, 77)
+    elif typ == "chain":
+        for k, (nm, cx) in enumerate(((a, 24), (b, 67), (spec["c"], 110))):
+            if t >= k * 0.7:
+                blit(arr, sprite(anim_name(nm, t), 14), cx, 112 + int(round(1.5 * math.sin(t * 1.6 + cx))))
+                if k > 0:
+                    blit(arr, sprite("op_arrow", 5), cx - 22, 112)
     elif typ == "card":
         for k, (sx, sy) in enumerate([(18, 60), (116, 72), (24, 168), (110, 160)]):
             if (int(t * 2) + k) % 2 == 0:
@@ -1353,7 +1402,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v9 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v10 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -1389,7 +1438,11 @@ def preflight():
                                             [px_frame({"type": "pair", "a": "heart", "b": "dna", "op": "arrow"}, 0.5, _stars()),
                                              px_frame({"type": "single", "a": "atom"}, 0.5, _stars()),
                                              px_frame({"type": "counter", "a": "heart", "num": 30.0, "label": "億回", "dur": 4.0}, 1.0, _stars()),
-                                             px_frame({"type": "card", "bg": "lab"}, 0.5, _stars())])
+                                             px_frame({"type": "card", "bg": "lab"}, 0.5, _stars()),
+                                             px_frame({"type": "chain", "a": "heart", "b": "blood", "c": "person"}, 2.0, _stars()),
+                                             px_frame({"type": "single", "a": "heart", "fx": "many"}, 2.0, _stars()),
+                                             px_frame({"type": "single", "a": "heart", "fx": "pulse"}, 0.5, _stars()),
+                                             px_frame({"type": "counter", "a": "drop", "num": 7.0, "label": "%", "dur": 4.0}, 1.0, _stars())])
         else:
             raise Fail("【事前チェック失敗】ピクセル描画の部品(Pillow/numpy)が入りません（Geminiは使っていません）。"
                        "ワークフローの「pip install requests」の行を「pip install requests pillow numpy」に変えてください")
