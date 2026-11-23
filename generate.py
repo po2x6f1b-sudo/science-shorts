@@ -1020,7 +1020,7 @@ def px_labels(spec):
         ly = 1245 if spec.get("label") == "%" and spec["num"] <= 100 else 1195
         return [(spec["label"], 540, ly, 76, "0xFFE14D")] if spec.get("label") else []
     if typ == "chain":
-        return [(PX_NAMES[x], cx * 8, 1060, 46, "white") for x, cx in ((a, 24), (b, 67), (spec["c"], 110))]
+        return [(PX_NAMES[x], cx * 8, 1060, 46, "white", k * 0.7) for k, (x, cx) in enumerate(((a, 24), (b, 67), (spec["c"], 110)))]
     if typ == "single" and spec.get("fx") == "many":
         return []
     if typ == "single" and not spec.get("first"):
@@ -1187,6 +1187,11 @@ def px_frame(spec, t, stars):
         y1 = int(ry) + 12
         arr[y1:y1 + fl, 64:70] = (255, 190, 60)
         arr[y1:y1 + max(1, fl - 2), 65:69] = (255, 245, 170)
+    if spec.get("gT"):  # 動画全体の進み具合を、上に細いバーで見せる
+        arr[23, :] = (40, 52, 80)
+        w_ = int(round(PX_W * min(1.0, (spec.get("gt0", 0.0) + t) / spec["gT"])))
+        if w_ > 0:
+            arr[23, :w_] = (255, 225, 77)
     return arr
 
 
@@ -1332,12 +1337,14 @@ def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None, card=False):
     else:
         for k, ef in enumerate(efs):
             vf += (f",drawtext=fontfile={F}:textfile='{ef}':fontsize=104:fontcolor=0xFFE14D:borderw=8:"
-                   f"bordercolor=black:x=(w-text_w)/2:y={260 + k * 124}:alpha='min(1,t/0.25)'")
-    for li, (ltxt, lcx, ly, lsz, lcol) in enumerate(labels or []):
+                   f"bordercolor=black:x=(w-text_w)/2:y='{260 + k * 124}-max(0,0.3-t)*500':alpha='min(1,t/0.25)'")
+    for li, lab in enumerate(labels or []):
+        ltxt, lcx, ly, lsz, lcol = lab[:5]
+        lst = lab[5] if len(lab) > 5 else 0
         lf = WORK / f"s{i}_l{li}.txt"
         lf.write_text(ltxt, encoding="utf-8")
         vf += (f",drawtext=fontfile={F}:textfile='{lf}':fontsize={lsz}:fontcolor={lcol}:borderw=5:"
-               f"bordercolor=black:x={lcx}-text_w/2:y={ly}")
+               f"bordercolor=black:x={lcx}-text_w/2:y={ly}" + (f":enable='gte(t,{lst})'" if lst > 0 else ""))
     if subs:
         vf += f",drawbox=x=0:y=1330:w=iw:h=250:color=black@0.55:t=fill:enable='between(t,0.05,{subs[-1][2] + 0.1:.2f})'"
     for fl, a, b in subs:
@@ -1345,7 +1352,7 @@ def render_scene(i, sc, bg, wav, dur, F, pixel=False, labels=None, card=False):
         for j, f in enumerate(fl):
             vf += (f",drawtext=fontfile={F}:textfile='{f}':fontsize=58:fontcolor=white:borderw=3:bordercolor=black:"
                    f"x=(w-text_w)/2:y={y0 + j * 84}:enable='between(t,{a:.2f},{b:.2f})'")
-    vf += ",format=yuv420p[v]"
+    vf += (",fade=t=in:st=0:d=0.2" if (i > 0 and pixel) else "") + ",format=yuv420p[v]"
     if not bg:
         inp = ["-f", "lavfi", "-i", "gradients=s=1080x1920:c0=0x02030a:c1=0x0a3550:x0=0:y0=0:x1=1080:y1=1920:speed=0.02"]
     elif pixel:
@@ -1376,10 +1383,119 @@ def make_audio_assets(total):
          "-ar", "44100", str(WORK / "sfx.wav")])
 
 
-def assemble(scenes_files, starts, total):
+def _env(n, sr, a=0.004, decay=6.0):
+    t = np.arange(n) / sr
+    e = np.exp(-t * decay)
+    k = int(a * sr)
+    if k > 0:
+        e[:k] *= np.linspace(0, 1, k)
+    return e
+
+
+def _osc(kind, f, n, sr, duty=0.5):
+    ph = (np.arange(n) / sr * f) % 1.0
+    if kind == "tri":
+        return 4 * np.abs(ph - 0.5) - 1
+    return np.where(ph < duty, 1.0, -1.0)
+
+
+def _sfx_signal(kind, sr):
+    if kind == "pop":
+        n = int(0.12 * sr); t = np.arange(n) / sr
+        ph = np.cumsum(660 + 660 * t / 0.12) / sr
+        return 0.6 * np.where((ph % 1) < 0.5, 1.0, -1.0) * np.exp(-t * 16)
+    if kind == "tick":
+        n = int(0.03 * sr)
+        return 0.4 * _osc("sq", 1800, n, sr) * np.exp(-np.arange(n) / sr * 90)
+    n = int(0.14 * sr)  # ding: 2音の上昇
+    a = 0.5 * _osc("sq", 988, n, sr, 0.25) * _env(n, sr, decay=12)
+    b = 0.5 * _osc("sq", 1319, n, sr, 0.25) * _env(n, sr, decay=10)
+    return np.concatenate([a, b])
+
+
+def chip_mix(total, events, path, seed=1):
+    """8ビット風のBGM(自作・ランダム作曲)と、絵が出るときの効果音を、1本の音声にする。著作権の心配はない"""
+    import wave
+    sr = 44100
+    N = int(total * sr)
+    bgm = np.zeros(N)
+    sfx = np.zeros(N)
+    rnd = random.Random(seed)
+    beat = 60 / 112
+    eighth = beat / 2
+    chords = [(130.81, [261.63, 329.63, 392.00]), (110.00, [220.00, 261.63, 329.63]),
+              (87.31, [174.61, 220.00, 261.63]), (98.00, [196.00, 246.94, 293.66])]
+    penta = [523.25, 587.33, 659.25, 783.99, 880.00]
+
+    def put(buf, sig, start):
+        i0 = int(start * sr)
+        if i0 >= N:
+            return
+        seg = sig[: N - i0]
+        buf[i0:i0 + len(seg)] += seg
+
+    bar = 4 * beat
+    mel_i = 2
+    for b in range(int(total / bar) + 1):
+        root, tones = chords[b % 4]
+        t0 = b * bar
+        for k in range(4):
+            n = int(beat * 0.9 * sr)
+            put(bgm, 0.55 * _osc("tri", root * (1.5 if k == 2 else 1.0), n, sr) * _env(n, sr, decay=3.0), t0 + k * beat)
+        for k, ti in enumerate([0, 1, 2, 1, 0, 1, 2, 1]):
+            n = int(eighth * 0.8 * sr)
+            put(bgm, 0.18 * _osc("sq", tones[ti], n, sr, 0.25) * _env(n, sr, decay=9.0), t0 + k * eighth)
+        pos = 0.0
+        while pos < bar - 1e-6:
+            d_ = min(rnd.choice([eighth, eighth, beat, beat]), bar - pos)
+            if rnd.random() < 0.8:
+                mel_i = max(0, min(len(penta) - 1, mel_i + rnd.choice([-1, 0, 1, 1, -1, 2, -2])))
+                n = int(d_ * 0.9 * sr)
+                put(bgm, 0.22 * _osc("sq", penta[mel_i], n, sr, 0.5) * _env(n, sr, decay=4.0), t0 + pos)
+            pos += d_
+        for k in range(4):
+            n = int(0.05 * sr)
+            put(bgm, 0.10 * (np.random.default_rng(b * 4 + k).random(n) * 2 - 1) * _env(n, sr, decay=60.0),
+                t0 + k * beat + eighth)
+    fi, fo = int(0.5 * sr), int(1.5 * sr)
+    bgm[:fi] *= np.linspace(0, 1, min(fi, N))
+    bgm[max(0, N - fo):] *= np.linspace(1, 0, len(bgm[max(0, N - fo):]))
+    for tm, kind in events:
+        put(sfx, _sfx_signal(kind, sr), tm)
+    out = np.clip(0.20 * bgm + 0.30 * sfx, -0.95, 0.95)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes((out * 32767).astype(np.int16).tobytes())
+
+
+def fx_events(spec, st, tt):
+    """絵の動きに合わせた効果音のタイミング"""
+    ev = [(st + 0.02, "pop")]
+    ty = spec.get("type")
+    if ty == "counter":
+        end = st + 0.65 * (tt + 0.35)
+        x = st + 0.15
+        while x < end:
+            ev.append((x, "tick"))
+            x += 0.07
+        ev.append((end, "ding"))
+    elif ty == "chain":
+        ev += [(st + 0.7, "pop"), (st + 1.4, "pop")]
+    elif ty == "single" and spec.get("fx") == "many":
+        ev += [(st + k * 0.2, "pop") for k in range(1, 9)]
+    return ev
+
+
+def assemble(scenes_files, starts, total, events=None, seed=1):
     lst = WORK / "list.txt"
     lst.write_text("".join(f"file '{p.resolve()}'\n" for p in scenes_files))
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(WORK / "concat.mp4")])
+    if events is not None and PX_OK:
+        chip_mix(total + 1, events, WORK / "fx.wav", seed)
+        run(["ffmpeg", "-y", "-i", str(WORK / "concat.mp4"), "-i", str(WORK / "fx.wav"), "-filter_complex",
+             "[0:a][1:a]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95[a]", "-map", "0:v", "-map", "[a]",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(OUT / "video.mp4")])
+        return
     make_audio_assets(total + 1)
     n = len(starts)
     fc = [f"[2:a]asplit={n}" + "".join(f"[x{i}]" for i in range(n))]
@@ -1402,7 +1518,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v10 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v11 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -1433,6 +1549,7 @@ def preflight():
     step("VOICEVOX(音声合成)", vv)
     if VISUAL_MODE == "pixel":
         if PX_OK:
+            step("BGM・効果音の作成", lambda: chip_mix(2.0, [(0.1, "pop"), (0.3, "tick"), (0.6, "ding")], WORK / "pf_fx.wav", 1))
             step("ピクセルアート描画", lambda: [px_frame({"type": t, "a": "earth", "b": "moon"}, 0.5, _stars())
                                             for t in ("single", "orbit", "compare", "travel")] +
                                             [px_frame({"type": "pair", "a": "heart", "b": "dna", "op": "arrow"}, 0.5, _stars()),
@@ -1509,9 +1626,15 @@ def main():
     card_scenes = set()
     last_a = None
     main_a = px_guess(topic) or px_guess(" ".join(script.get("titles", [])[:1]))
+    durs = [tts(sc["narration"], speaker, WORK / f"s{i}.wav") for i, sc in enumerate(scenes)]
+    offs, acc_ = [], 0.0
+    for d_ in durs:
+        offs.append(acc_)
+        acc_ += d_ + 0.15
+    T_all = acc_
     for i, sc in enumerate(scenes):
         wav = WORK / f"s{i}.wav"
-        dur = tts(sc["narration"], speaker, wav)
+        dur = durs[i]
         if VISUAL_MODE == "pixel":
             spec = px_choose(sc, sc.get("pixel"), i == 0, last_a, main_a, hist)
             hist.append(spec)
@@ -1519,7 +1642,7 @@ def main():
             if spec.get("a"):
                 last_a = spec["a"]
             pxp = WORK / f"px{i}.mp4"
-            px_labels_map[i] = px_render(spec, dur + 0.5, pxp)
+            px_labels_map[i] = px_render(dict(spec, gt0=offs[i], gT=T_all), dur + 0.5, pxp)
             if spec["type"] == "card":
                 card_scenes.add(i)
             print(f"   シーン{i}: ピクセルアート {spec}")
@@ -1554,11 +1677,16 @@ def main():
         print("   注意: 目標の40秒前後より長めです。次回の改善の参考にしてください")
 
     print("5) シーン合成")
-    files, starts, t0 = [], [], 0.0
+    files, starts, totals, t0 = [], [], [], 0.0
     for i, (sc, bg, wav, dur) in enumerate(items):
         f, total = render_scene(i, sc, bg, wav, dur, F, pixel=(i in px_labels_map), labels=px_labels_map.get(i), card=(i in card_scenes))
-        files.append(f); starts.append(t0); t0 += total
-    print("6) 全体合成"); assemble(files, starts, t0)
+        files.append(f); starts.append(t0); totals.append(total); t0 += total
+    events = None
+    if VISUAL_MODE == "pixel" and PX_OK:
+        events = []
+        for i, sp in enumerate(hist):
+            events += fx_events(sp, starts[i], totals[i])
+    print("6) 全体合成"); assemble(files, starts, t0, events, sum(map(ord, topic)))
     print("7) サムネイル"); thumbnail(script["titles"][0], F)
 
     credit_voice = f"VOICEVOX:{vname}"
