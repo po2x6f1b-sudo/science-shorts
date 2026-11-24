@@ -115,7 +115,10 @@ def pick_topic(history):
 - angle: 動画で伝える一番意外な事実を1文で
 - wiki_query: Wikipedia日本語に実在する、物・現象・生き物・身体・天体の一般的な記事名(例:「心臓」「雷」「バナナ」「ブラックホール」)。人名は不可。
 すでに使ったテーマ（重複・類似は禁止）: {json.dumps(used, ensure_ascii=False)}
-JSONのみ: {{"topic":"","angle":"","wiki_query":""}}"""
+- icon: 動画の主題（主役）そのものを表す絵の名前を、次から1つ選ぶ。主題を表す絵がなければ、空にする（無理に近いものを選ばない）。
+  人(person)や地球(earth)は、主題が人や地球そのものの場合だけ選ぶ。例: 蚊の話なら mosquito、心臓の話なら heart、犬の話なら空。
+  選べる名前: {", ".join(PX_NAMES)}
+JSONのみ: {{"topic":"","angle":"","wiki_query":"","icon":""}}"""
     t = gemini(p)
     if isinstance(t, list):
         t = t[0] if t else {}
@@ -199,7 +202,9 @@ def write_script(topic, angle, src, feedback=""):
     自然・物理・化学: drop(水), flame(火), bolt(電気・雷), snowflake(氷・雪), cloud(雲・雨・天気), volcano(火山), atom(原子・分子), magnet(磁石), bulb(電球・ひらめき), flask(実験・化学), thermometer(温度・熱)
     食べ物: banana, apple, egg
     その他: rainbow(虹), mountain(山), mushroom(キノコ), clock(時計・時間), person(人・体全体), blood(血), lung(肺・呼吸), wave(音・波)
-  【重要】絵の名前は、そのシーンの台詞か強調文字に、その言葉（例: 虹、心臓）が出てくるときだけ選ぶ。出てこなければ a を空にする。
+    動物: mosquito(蚊), bee(ハチ), butterfly(チョウ), spider(クモ), bird(鳥), cat(猫), whale(クジラ)
+  【重要】絵は、そのシーンで説明している主題を表すものだけ選ぶ。台詞に出てくる言葉でも、場所や補足（「地球上で」「人間を」など）は主題ではない。
+  主題を表す名前がなければ、必ず a を空にする。近いものを無理に選ばない（間違った絵は出さないほうがよい）。
   pair / compare / orbit は、台詞に a と b の両方の言葉が、chain は a, b, c の3つの言葉が出るときだけ使う。無理に関連づけない。
   1シーン目は必ず type=single。同じ指定を連続させない。
   原因と結果、変化（例: 水が氷になる）は pair の arrow を使うと分かりやすい。内容に合う名前がなければ a を空にする。
@@ -377,7 +382,10 @@ PX_NAMES = {"sun": "太陽", "mercury": "水星", "venus": "金星", "earth": "�
             "atom": "原子", "magnet": "磁石", "bulb": "電球", "flask": "実験", "thermometer": "温度",
             "banana": "バナナ", "apple": "りんご", "egg": "卵",
             "rainbow": "虹", "mountain": "山", "mushroom": "キノコ",
-            "clock": "時計", "person": "人", "blood": "血", "lung": "肺", "wave": "音・波"}
+            "clock": "時計", "person": "人", "blood": "血", "lung": "肺", "wave": "音・波",
+            "mosquito": "蚊", "bee": "ハチ", "butterfly": "チョウ", "spider": "クモ", "bird": "鳥", "cat": "猫", "whale": "クジラ"}
+# 台詞に出てくるだけでは主役と限らない絵。動画の主役の絵があるときは、強調文字に出てくる場合だけ使う
+PX_WEAK = {"person", "earth", "wave", "clock"}
 # 一般的すぎる絵。強調文字に出てくるときだけ使い、動画の主役の絵があれば、そちらを優先する
 PX_GENERIC = {"drop", "cloud", "flask", "thermometer", "bulb", "clock"}
 SPACE_BODIES = {"sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune",
@@ -463,6 +471,28 @@ _PAT.update({
     "lung": ([".....TTT.....", "......T......", "..LLL.T.LLL..", ".LLLLLTLLLLL.", "LLLLLL.LLLLLL", "LLLLLL.LLLLLL",
               "LLLLLL.LLLLLL", "LLLLLL.LLLLLL", ".LLLLL.LLLLL.", "..LLL...LLL.."],
              {"L": (240, 140, 150), "T": (200, 170, 170)}),
+})
+_PAT.update({
+    "mosquito": (["...WW....WW...", "..WWWW..WWWW..", "..WWWWBBWWWW..", "...WWWBBWWW...", "K....BBBB....K", ".K...BBBB...K.",
+                  "..K..BBBB..K..", ".....BBBB.....", "......BB......", "......BB......", "......PP......"],
+                 {"W": (190, 225, 255), "B": (165, 125, 95), "K": (215, 195, 180), "P": (240, 240, 250)}),
+    "bee": (["..WW....WW..", ".WWWW..WWWW.", "..WWWYYWWW..", "....YYYY....", "...YYYYYY...", "...KKKKKK...",
+             "...YYYYYY...", "...KKKKKK...", "....YYYY....", ".....KK....."],
+            {"Y": (255, 210, 50), "K": (95, 70, 45), "W": (210, 230, 250)}),
+    "butterfly": (["OO.........OO", "OOOO..K..OOOO", "OOOOOOKOOOOOO", "OOWOOOKOOOWOO", "OOOOOOKOOOOOO", ".OOOOOKOOOOO.",
+                   "..PPPPKPPPP..", "...PPPKPPP...", "....PPKPP...."],
+                  {"O": (255, 140, 40), "P": (255, 190, 90), "W": (255, 255, 255), "K": (50, 40, 40)}),
+    "spider": (["K...........K", ".K....B....K.", "..K.BBBBB.K..", "KKKBBBBBBBKKK", "...BBBBBBB...", "KKKBBBBBBBKKK",
+                "..K.BBBBB.K..", ".K....B....K.", "K...........K"], {"B": (175, 165, 195), "K": (225, 220, 235)}),
+    "bird": ([".....BBBB...", "....BBBBBB..", "....BWKBBBOO", "....BBBBBBO.", ".BB.BBBBBB..", "BBBBBBBBBB..", "BBBBBBBBBB..",
+              ".BBBBBBBB...", "..BBBBBB....", "...Y..Y....."],
+             {"B": (80, 150, 230), "W": (255, 255, 255), "K": (20, 20, 30), "O": (255, 180, 50), "Y": (240, 170, 40)}),
+    "cat": (["BB.......BB", "BBB.....BBB", "BBBBBBBBBBB", "BGGBBBBBGGB", "BGKBBBBBGKB", "BBBBBPBBBBB", "BBBBPPPBBBB",
+             "WWBBBPBBBWW", ".BBBBBBBBB.", "..BBBBBBB.."],
+            {"B": (240, 170, 80), "G": (120, 220, 120), "K": (20, 20, 20), "P": (255, 140, 160), "W": (245, 245, 245)}),
+    "whale": ([".....BBBBBB.....", "...BBBBBBBBBB..B", "..BBBBBBBBBBBBBB", ".BBKBBBBBBBBBBB.", "BBBBBBBBBBBBBB..",
+               "BWWWWWWWWWBBB...", ".BWWWWWWWBBB....", "..BBBBBBBBB....."],
+              {"B": (70, 120, 190), "W": (225, 235, 245), "K": (20, 20, 30)}),
 })
 _DIG = {"0": ["XXX", "X.X", "X.X", "X.X", "XXX"], "1": [".X.", "XX.", ".X.", ".X.", "XXX"],
         "2": ["XXX", "..X", "XXX", "X..", "XXX"], "3": ["XXX", "..X", "XXX", "..X", "XXX"],
@@ -903,6 +933,8 @@ _PX_KEYS = [
     (r"電球", "bulb"), (r"実験|化学|薬品|試薬", "flask"), (r"温度|体温|熱|気温", "thermometer"),
     (r"時計|時間|一生|寿命|何年", "clock"), (r"肺|呼吸|息", "lung"), (r"血液|血(?!管)|出血", "blood"),
     (r"人間|身体|全身|人体|赤ちゃん|大人|子ども|子供", "person"), (r"音|波|振動|周波数", "wave"),
+    (r"蚊|マラリア|デング熱", "mosquito"), (r"ミツバチ|蜂|ハチ", "bee"), (r"蝶|チョウ", "butterfly"),
+    (r"クモ|蜘蛛", "spider"), (r"鳥|ハト|カラス|ツバメ|スズメ", "bird"), (r"猫|ネコ|ねこ", "cat"), (r"クジラ|鯨", "whale"),
     (r"虹", "rainbow"), (r"山脈|山頂|登山|富士山|山(?![脈])", "mountain"), (r"キノコ|きのこ|茸", "mushroom"),
     (r"バナナ", "banana"), (r"りんご|リンゴ|林檎", "apple"), (r"卵|たまご", "egg"),
 ]
@@ -940,7 +972,11 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
     def ok(name):
         if not name or not px_ok(name, both):
             return False
-        return (name not in PX_GENERIC) or px_ok(name, emph)
+        if name in PX_GENERIC:
+            return px_ok(name, emph)
+        if name in PX_WEAK and name != main_a:  # 人・地球・時計・音は、強調文字に出てくるときだけ
+            return px_ok(name, emph)
+        return True
 
     spec = px_spec(raw, first)
     a, b = spec.get("a"), spec.get("b")
@@ -963,10 +999,10 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
     # 強調文字に数字があれば、カウントアップの場面にする(1シーン目は除く)
     num = None if first else px_number(emph)
     if num and spec["type"] in ("none", "single"):
-        a_ = spec.get("a") or px_guess(emph) or px_guess(narr) or main_a
+        a_ = spec.get("a") or px_guess(emph) or main_a
         spec = {"type": "counter", "a": a_, "num": num[0], "label": num[1]}
     if spec["type"] == "none":
-        g_ = px_guess(emph) or next((x for x in [px_guess(narr)] if x and x not in PX_GENERIC), None)
+        g_ = px_guess(emph)  # 強調文字(その場面の主題)の言葉だけを根拠にする。台詞の言葉は、場所や補足のことがあるので使わない
         num2 = None if first else px_number(narr)
         if num2:
             spec = {"type": "counter", "a": g_ or main_a, "num": num2[0], "label": num2[1]}
@@ -976,15 +1012,15 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
             spec = px_spec({"type": "single", "a": main_a}, first)
             if not first:
                 spec["zoom"] = True
-        elif last_a:
-            spec = px_spec({"type": "single", "a": last_a}, first)
-            if not first:
-                spec["zoom"] = True
+        elif not first:
+            spec = {"type": "card"}  # 合う絵がないときは、間違った絵を出さず、大きな文字だけにする
     names = [spec.get(k) for k in ("a", "b") if spec.get(k)]
     if spec["type"] in ("single", "pair") and names and all(n in PX_GENERIC for n in names) and main_a and main_a not in names:
         spec = px_spec({"type": "single", "a": main_a}, first)
         if not first and main_a == last_a:
             spec["zoom"] = True
+    if first and main_a:  # 1シーン目(サムネイル)は、動画の主役の絵にする
+        spec = {"type": "single", "a": main_a, "first": True}
     # 前の場面と同じ絵が続くなら、見せ方を変える(脈打つ / たくさん並ぶ / 拡大)。使い切ったら文字カード
     if spec["type"] == "single" and not first and hist and hist[-1].get("a") == spec.get("a"):
         used = {h.get("fx") for h in list(hist)[-3:]}
@@ -999,7 +1035,7 @@ def px_choose(sc, raw, first, last_a, main_a, hist=()):
     if main_a:  # 背景は、動画の主役に合わせて統一する
         spec["bg"] = "space" if main_a in SPACE_SET else "lab"
     elif spec["type"] in ("none", "card"):
-        spec["bg"] = "space" if (last_a is None or last_a in SPACE_SET) else "lab"
+        spec["bg"] = "space" if (last_a in SPACE_SET) else "lab"
     return spec
 
 
@@ -1518,7 +1554,7 @@ def thumbnail(title, F):
 
 def preflight():
     """Geminiを使う前に、後工程で必要なものがそろっているか確認する(失敗なら無駄な呼び出しをしない)"""
-    print("プログラムのバージョン: ピクセルアート版 v11 / 映像モード:", VISUAL_MODE)
+    print("プログラムのバージョン: ピクセルアート版 v12 / 映像モード:", VISUAL_MODE)
     print("0) 事前チェック（Geminiは使いません）")
     def step(name, fn):
         try:
@@ -1608,6 +1644,7 @@ def main():
             print("   3回確認しても指摘が残るため、指摘箇所を資料の範囲に自動修正します")
             script = repair_script(sc, src, fb)
             script["check_notes"] = fb
+        script["icon"] = t.get("icon", "")
         pend_path.write_text(json.dumps({"topic": topic, "script": script, "src": src, "tries": 1},
                                         ensure_ascii=False), encoding="utf-8")
         git_push("台本を一時保存")
@@ -1625,7 +1662,9 @@ def main():
     hist = []
     card_scenes = set()
     last_a = None
-    main_a = px_guess(topic) or px_guess(" ".join(script.get("titles", [])[:1]))
+    icon = script.get("icon", "")
+    main_a = icon if (icon in PX_NAMES and px_ok(icon, topic + " " + " ".join(script.get("titles", [])[:1]))) else None
+    print("   動画の主役の絵:", main_a or "なし（場面ごとに判断）")
     durs = [tts(sc["narration"], speaker, WORK / f"s{i}.wav") for i, sc in enumerate(scenes)]
     offs, acc_ = [], 0.0
     for d_ in durs:
